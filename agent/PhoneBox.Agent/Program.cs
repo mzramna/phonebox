@@ -24,6 +24,10 @@ if (!firstInstance)
 
 if (!args.Contains("--config")) AppPaths.EnsureConfig();
 var configPath = args.SkipWhile(a => a != "--config").Skip(1).FirstOrDefault() ?? AppPaths.ConfigPath;
+// Community plugins: read the manifests before the settings, so plugin widgets are known to the catalog.
+var pluginRegistry = new PluginRegistry(args.SkipWhile(a => a != "--plugins").Skip(1).FirstOrDefault() is { } pluginsArg
+    ? Path.GetFullPath(pluginsArg) : PluginRegistry.DefaultDir(configPath));
+try { pluginRegistry.Scan(); } catch (Exception ex) { Console.Error.WriteLine($"plugins: {ex.Message}"); }
 var configStore = new ConfigStore(configPath);
 configStore.PersistGenerated(); // keep the Wi-Fi token stable across restarts
 var lanCfg = configStore.Get().Lan;
@@ -73,6 +77,8 @@ AddMonitor<ObsMonitor>(builder.Services);
 AddMonitor<BatteryMonitor>(builder.Services);
 AddMonitor<RuleEngine>(builder.Services);
 AddMonitor<ChargeGuard>(builder.Services);
+builder.Services.AddSingleton(pluginRegistry);
+AddMonitor<PluginHost>(builder.Services);
 builder.Services.AddHostedService<Tray>();
 
 var app = builder.Build();
@@ -265,7 +271,7 @@ app.MapGet("/api/info", (AdbReverse adb, ConfigStore cfg) => Results.Json(new
 app.MapPost("/api/phone/open", async (AdbReverse adb) => { await adb.OpenPanelAsync(); return Results.Ok(); });
 
 // Widget types and page templates for the settings page's layout editor.
-app.MapGet("/api/catalog", () => Results.Text($"{{\"cols\":{Catalog.Cols},\"rows\":{Catalog.Rows},\"widgets\":{Catalog.WidgetsJson},\"templates\":{Catalog.TemplatesJson}}}",
+app.MapGet("/api/catalog", () => Results.Text($"{{\"cols\":{Catalog.Cols},\"rows\":{Catalog.Rows},\"widgets\":{Catalog.AllWidgetsJson},\"templates\":{Catalog.TemplatesJson}}}",
     "application/json; charset=utf-8"));
 
 // ---------------------------------------------------------------- webhook API: push data and events into the panel
@@ -318,6 +324,7 @@ object State(IServiceProvider sp, long? ev)
         host = Environment.MachineName,
         cfgVersion = sp.GetRequiredService<ConfigStore>().Version,
         pushVersion = push.Version,
+        pluginsVersion = sp.GetRequiredService<PluginHost>().Version,
         evSeq = push.Seq,
         events = ev is { } since ? push.Since(since) : [],
         pc = sp.GetRequiredService<SystemMonitor>().Snapshot(),
@@ -462,6 +469,40 @@ app.MapPost("/api/approvals/{id}", (string id, string decision, ApprovalStore a)
 // Output of a command widget (the command itself stays here).
 app.MapGet("/api/widget/{page}/{widget}", (string page, string widget, bool? force, CommandRunner runner) =>
     runner.Get(page, widget, force == true) is { } r ? Results.Json(r) : Results.NotFound());
+
+// ---------------------------------------------------------------- community plugins (docs/PLUGINS.md)
+// Settings page (local only): the plugins found, rescanning the folder, restarting one.
+app.MapGet("/api/plugins", (PluginHost host) => Results.Json(host.Status()));
+app.MapPost("/api/plugins/rescan", (PluginRegistry registry, PluginHost host) => { registry.Scan(); host.Reconcile(); return Results.Json(host.Status()); });
+// Add or update a plugin from a .zip (body), and remove one; local only like the rest of the settings.
+app.MapPost("/api/plugins/install", async (bool? replace, HttpRequest req, PluginHost host, CancellationToken ct) =>
+{
+    if (req.ContentLength > PluginInstaller.MaxZipBytes) return Results.BadRequest(new { error = $"the file is larger than {PluginInstaller.MaxZipBytes / 1024 / 1024} MB" });
+    var (id, error) = await host.InstallAsync(req.Body, replace == true, ct);
+    return error is null ? Results.Json(new { id }) : Results.BadRequest(new { error });
+});
+app.MapDelete("/api/plugins/{id}", async (string id, bool? keepData, PluginHost host) =>
+    await host.UninstallAsync(id, keepData == true) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
+app.MapPost("/api/plugins/{id}/restart", (string id, PluginHost host) => { host.Restart(id); return Results.Ok(); });
+// Panel (also over Wi-Fi): the data the plugins publish, their widget UIs, and actions by page and widget id.
+app.MapGet("/api/plugins/state", (PluginHost host) => Results.Json(host.Snapshot()));
+app.MapGet("/api/plugins/{id}/ui/{widget}", (string id, string widget, ConfigStore cfg) =>
+    cfg.Get().PluginEnabled(id) && Catalog.Plugin(id)?.UiFile(widget) is { } file && File.Exists(file)
+        ? Results.Text(File.ReadAllText(file), "text/html; charset=utf-8") : Results.NotFound());
+// The Android shell cannot forward request bodies, so the action's arguments come as ?args=<JSON> (at most 4 KB).
+app.MapPost("/api/plugins/{id}/action", async (string id, string? page, string? widget, string? name, string? args, PluginHost host, CancellationToken ct) =>
+{
+    if (string.IsNullOrEmpty(page) || string.IsNullOrEmpty(widget) || string.IsNullOrEmpty(name)) return Results.BadRequest(new { ok = false, error = "page, widget and name are required" });
+    JsonElement? a = null;
+    if (!string.IsNullOrEmpty(args))
+    {
+        if (args.Length > 4096) return Results.BadRequest(new { ok = false, error = "args is larger than 4 KB" });
+        try { a = JsonDocument.Parse(args).RootElement.Clone(); }
+        catch (JsonException) { return Results.BadRequest(new { ok = false, error = "args is not JSON" }); }
+    }
+    var r = await host.ActAsync(id, page, widget, name, a, ct);
+    return Results.Json(new { ok = r.Ok, error = r.Error, data = r.Data }, statusCode: r.Ok ? 200 : 400);
+});
 
 app.MapGet("/api/config", (ConfigStore cfg, HttpRequest req) =>
     Results.Json(new { version = cfg.Version, config = cfg.Get().ToPublic(req.Headers["X-PhoneBox-Device"].ToString()) }));

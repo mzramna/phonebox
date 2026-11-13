@@ -29,6 +29,11 @@ public sealed class AgentConfig
     public HomeAssistantConfig HomeAssistant { get; set; } = new();
     /// <summary>OBS Studio's WebSocket server (obs-websocket 5).</summary>
     public ObsConfig Obs { get; set; } = new();
+    /// <summary>Community plugins (see docs/PLUGINS.md): which ones may run, and their settings (never sent to the phone).</summary>
+    public List<PluginConfig> Plugins { get; set; } = [];
+
+    public PluginConfig? Plugin(string id) => Plugins.FirstOrDefault(p => p.Id == id);
+    public bool PluginEnabled(string id) => Plugin(id)?.Enabled == true;
 
     /// <summary>The pages a phone shows: its own selection (Settings › Phones), or all of them.</summary>
     public IEnumerable<PageConfig> PagesFor(string? deviceId)
@@ -60,6 +65,8 @@ public sealed class AgentConfig
         // names only (for the Rules widget); what a rule matches on stays here
         rules = Rules.Select(r => new { r.Id, r.Name, r.Enabled, r.When }),
         charge = new { Charge.Enabled, Charge.Min, Charge.Max },
+        // enabled plugins: what the panel needs to draw their widgets; plugin settings (tokens…) stay here
+        plugins = Plugins.Where(p => p.Enabled).Select(p => Catalog.PluginPublic(p.Id)).OfType<object>(),
     };
 
     /// <summary>Ending processes is allowed when an enabled page has a processes widget that allows it.</summary>
@@ -69,6 +76,15 @@ public sealed class AgentConfig
 
     public bool AllowKill() => Widgets(enabledPagesOnly: true)
         .Any(w => w.Type == "processes" && w.Bool("allowKill") != false);
+}
+
+/// <summary>A community plugin the user has looked at: enabled plugins run their backend and show their widgets.</summary>
+public sealed class PluginConfig
+{
+    public string Id { get; set; } = "";
+    public bool Enabled { get; set; }
+    /// <summary>Values of the manifest's "settings" (API URLs, tokens…), handed to the plugin's backend only.</summary>
+    public Dictionary<string, JsonElement>? Settings { get; set; }
 }
 
 public sealed class WeatherConfig
@@ -460,6 +476,8 @@ public sealed partial class ConfigStore(string path)
         c.HomeAssistant ??= new();
         c.HomeAssistant.Url = string.IsNullOrWhiteSpace(c.HomeAssistant.Url) ? null : c.HomeAssistant.Url.Trim().TrimEnd('/');
         c.HomeAssistant.Token = string.IsNullOrWhiteSpace(c.HomeAssistant.Token) ? null : c.HomeAssistant.Token.Trim();
+        c.Plugins = (c.Plugins ?? []).Where(p => p is not null && PluginIdRegex().IsMatch(p.Id ?? "")).DistinctBy(p => p.Id).Take(100).ToList();
+        foreach (var pl in c.Plugins) if (pl.Settings is { Count: 0 }) pl.Settings = null;
         c.Calendars = (c.Calendars ?? []).Where(x => x is not null).Take(20).ToList();
         foreach (var cal in c.Calendars) { cal.Name = cal.Name?.Trim() ?? ""; cal.Url = cal.Url?.Trim() ?? ""; }
 
@@ -615,6 +633,9 @@ public sealed partial class ConfigStore(string path)
 
     [GeneratedRegex("[^a-z0-9]+")]
     private static partial Regex NonSlug();
+
+    [GeneratedRegex("^[a-z0-9][a-z0-9-]{1,39}$")]
+    private static partial Regex PluginIdRegex();
 
     [GeneratedRegex(@"^([01]\d|2[0-3]):[0-5]\d$")]
     private static partial Regex HhMm();

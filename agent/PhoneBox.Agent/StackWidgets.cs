@@ -14,7 +14,7 @@ internal static class StackWidgets
             if (raw.ValueKind != JsonValueKind.Array) return [];
             return raw.EnumerateArray().Take(12).Where(x => x.ValueKind == JsonValueKind.Object
                 && x.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String
-                && type.GetString() is not ("stack" or "command") && Catalog.IsWidget(type.GetString()!))
+                && type.GetString() is not ("stack" or "command") && Catalog.IsWidget(type.GetString()!) && !Catalog.IsPluginType(type.GetString()!))
                 .Select((x, index) => new Child(x.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String
                     ? id.GetString()! : "card-" + index, x.GetProperty("type").GetString()!,
                     (!x.TryGetProperty("enabled", out var on) || on.ValueKind != JsonValueKind.False)
@@ -29,6 +29,9 @@ internal static class StackWidgets
     public static Dictionary<string, JsonElement>? PublicOptions(WidgetConfig w)
     {
         if (w.Type == "command") return w.Options?.Where(o => o.Key is "title" or "interval").ToDictionary();
+        // plugin widgets: options marked "secret" in the manifest stay here; a plugin that is not installed shows nothing
+        if (Catalog.IsPluginType(w.Type))
+            return Catalog.PluginWidget(w.Type) is { } pw ? w.Options?.Where(o => !pw.SecretOptions.Contains(o.Key)).ToDictionary() : null;
         if (w.Type != "stack" || w.Options is null) return w.Options;
         var options = w.Options.ToDictionary();
         if (options.ContainsKey("widgets")) options["widgets"] = JsonSerializer.SerializeToElement(Children(w)
