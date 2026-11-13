@@ -1,0 +1,43 @@
+<!-- Shown in a sandboxed iframe on the phone. window.phonebox (added by the panel) gives this widget its own data
+     and lets it ask the plugin for its declared actions. No access to the panel, the agent or the network. -->
+<style>
+  body { padding: 12px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; }
+  header { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--pb-dim); text-transform: uppercase; }
+  header span { flex: 1; }
+  button { background: var(--pb-accent); color: #06221d; border: 0; border-radius: 9px; padding: 5px 12px; font: inherit; font-weight: 700; font-size: 12px; }
+  button:disabled { opacity: .5; }
+  ul { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
+  li { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.06); font-size: 14px; }
+  li i { width: 9px; height: 9px; border-radius: 50%; flex: none; background: #64748b; }
+  li.ok i { background: #22c55e; } li.warn i { background: #f59e0b; } li.error i { background: #ef4444; }
+  li b { flex: 1; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li small { color: var(--pb-dim); font-variant-numeric: tabular-nums; }
+  .empty { color: var(--pb-dim); font-size: 13px; }
+</style>
+<header><span id="title">Endpoints</span><button id="check">Check</button></header>
+<ul id="list"><li class="empty">Waiting for the first check…</li></ul>
+<script>
+  const list = document.getElementById('list');
+  const btn = document.getElementById('check');
+  document.getElementById('title').textContent = phonebox.options.title || 'Endpoints';
+  // this widget's own data: the plugin publishes it under the key "<page>.<widget>"
+  phonebox.on('instance', (data) => {
+    if (!data) return;
+    list.replaceChildren(...(data.items || []).map((it) => {
+      const li = document.createElement('li');
+      li.className = it.level || '';
+      const name = document.createElement('b');
+      name.textContent = it.label.replace(/^https?:\/\//, '');
+      const value = document.createElement('small');
+      value.textContent = it.value;
+      li.append(document.createElement('i'), name, value);
+      return li;
+    }));
+    if (!list.children.length) list.innerHTML = '<li class="empty">Add URLs in the widget settings</li>';
+  });
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try { await phonebox.action('check'); } catch (e) { phonebox.toast(e.message, 'err'); }
+    btn.disabled = false;
+  });
+</script>

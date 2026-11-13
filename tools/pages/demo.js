@@ -23,6 +23,13 @@
     'codexbar', 'devops', 'audio-deck', 'stream-deck', 'meeting-deck', 'development-deck', 'music-deck', 'system-deck'];
 
   let catalog = null;
+
+  // ---- community plugins: the example plugin (extras/plugins/http-status), as if it were installed and running
+  let pluginManifest = null;
+  const loadPlugin = () => (pluginManifest ??= realFetch(ROOT + 'plugins/http-status/plugin.json').then((r) => r.json()).catch(() => null));
+  const pluginType = (m, w) => `plugin.${m.id}.${w.id}`;
+  let pluginsVersion = 1;
+  const pluginChecks = {}; // "<page>.<widget>" -> when the made-up check ran
   async function loadCatalog() {
     if (catalog) return catalog;
     const [widgets, templates] = await Promise.all([realFetch(ROOT + 'widgets.json').then((r) => r.json()), realFetch(ROOT + 'templates.json').then((r) => r.json())]);
@@ -99,7 +106,7 @@
   const isObs = (type) => type === 'obs' || type.startsWith('obs-');
 
   // What the agent sends to a phone (AgentConfig.ToPublic): no commands, keys, tokens or what a rule matches on.
-  function publicConfig(c) {
+  function publicConfig(c, plugin = null) {
     const options = (w) => w.type === 'command' ? Object.fromEntries(Object.entries(w.options || {}).filter(([k]) => k === 'title' || k === 'interval')) : w.options ?? null;
     return {
       weather: c.weather, codexBar: c.codexBar, night: c.night, display: c.display,
@@ -108,7 +115,29 @@
       shortcuts: (c.shortcuts || []).map(({ id, label, icon, color, toggle, cmd }) => ({ id, label, icon, color, toggle: !!toggle || cmd === 'builtin:mute' })),
       rules: (c.rules || []).map(({ id, name, enabled, when }) => ({ id, name, enabled: enabled !== false, when })),
       charge: { enabled: !!c.charge?.enabled, min: c.charge?.min ?? 50, max: c.charge?.max ?? 80 },
+      plugins: plugin && (c.plugins || []).some((p) => p.id === plugin.id && p.enabled) ? [{ id: plugin.id, name: plugin.name, version: plugin.version, network: (plugin.permissions || []).includes('network'),
+        widgets: plugin.widgets.map((w) => ({ id: w.id, type: pluginType(plugin, w), name: w.name, icon: w.icon, ui: !!w.ui, view: w.view || null, actions: w.actions || [] })) }] : [],
     };
+  }
+
+  // made-up results of the example plugin's checks, published as the plugin's state (/api/plugins/state)
+  function pluginState(c, m) {
+    if (!m || !(c.plugins || []).some((p) => p.id === m.id && p.enabled)) return {};
+    const out = {};
+    let up = 0, total = 0;
+    for (const p of c.pages || []) for (const w of p.widgets || []) {
+      if (w.type !== pluginType(m, m.widgets[0])) continue;
+      const key = `${p.id}.${w.id}`, at = pluginChecks[key] ?? START;
+      const urls = Array.isArray(w.options?.urls) ? w.options.urls : ['https://example.com'];
+      const items = urls.slice(0, 20).map((u, i) => {
+        const down = /down|:1\b/.test(u), ms = 80 + ((i * 53 + Math.floor(at / 1000)) % 240);
+        total++; up += !down;
+        return down ? { label: u, value: 'down', level: 'error' } : { label: u, value: `200 · ${ms} ms`, code: 200, ms, level: 'ok' };
+      });
+      out[key] = { data: { title: w.options?.title || 'Endpoints', items, checkedAt: at }, at };
+    }
+    out.summary = { data: { title: 'Endpoints up', value: total ? `${up}/${total}` : '—', level: total && up === total ? 'ok' : total ? 'error' : null }, at: START };
+    return out;
   }
 
   // ---- webhook-style events (notifications, page switches) shared between tabs
@@ -171,7 +200,7 @@
   function state(since) {
     const [title, artist, album, dur] = TRACKS[player.track];
     return {
-      update: null, ts: now(), host: 'DESK-PC', cfgVersion: cfgVersion(), pushVersion, evSeq: seq, rules: ['music'], rulesPaused: rulesPaused > now() ? rulesPaused : null,
+      update: null, ts: now(), host: 'DESK-PC', cfgVersion: cfgVersion(), pushVersion, pluginsVersion, evSeq: seq, rules: ['music'], rulesPaused: rulesPaused > now() ? rulesPaused : null,
       events: since == null ? [] : events.filter((e) => e.seq > since),
       pc: {
         cpu: Math.max(1, wave(37, 8, 46, 0, 6)), cpuName: 'AMD Ryzen 9 7950X 16-Core Processor', cpuTemp: wave(60, 52, 68),
@@ -458,7 +487,29 @@
     if (path === '/api/controls/state') return json(await deckState());
     if (path.startsWith('/api/controls/command/') && method === 'POST') return json(await controlCommand(path.split('/').pop(), q));
     if (path === '/api/state') return json(state(q.has('ev') ? +q.get('ev') : null));
-    if (path === '/api/config') return json({ version: cfgVersion(), config: publicConfig(await config()) });
+    if (path === '/api/config') return json({ version: cfgVersion(), config: publicConfig(await config(), await loadPlugin()) });
+    if (path === '/api/plugins/state') return json({ version: pluginsVersion, plugins: { 'http-status': pluginState(await config(), await loadPlugin()) } });
+    if (path === '/api/plugins/http-status/ui/endpoints') return new Response(await realFetch(ROOT + 'plugins/http-status/ui/endpoints.html').then((r) => r.text()), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    if (path === '/api/plugins/http-status/action' && method === 'POST') {
+      // as the agent: only a widget of the plugin that exists on that page, and only an action it declares
+      const c = await config(), m = await loadPlugin();
+      const w = (c.pages || []).find((p) => p.id === q.get('page'))?.widgets?.find((x) => x.id === q.get('widget'));
+      const pw = m && w?.type.startsWith(`plugin.${m.id}.`) ? m.widgets.find((x) => pluginType(m, x) === w.type) : null;
+      if (!(c.plugins || []).some((p) => p.id === 'http-status' && p.enabled)) return json({ ok: false, error: 'the plugin is turned off in the settings' }, 400);
+      if (!pw) return json({ ok: false, error: 'no such widget' }, 400);
+      if (!(pw.actions || []).includes(q.get('name'))) return json({ ok: false, error: `the widget does not declare the action '${q.get('name')}'` }, 400);
+      pluginChecks[`${q.get('page')}.${q.get('widget')}`] = now();
+      pluginsVersion++;
+      return json({ ok: true, error: null, data: null });
+    }
+    if ((path === '/api/plugins/install' && method === 'POST') || (path.startsWith('/api/plugins/') && method === 'DELETE'))
+      return json({ error: 'Adding and removing plugins needs the PhoneBox agent on your computer, not the web demo' }, 400);
+    if (path === '/api/plugins' || path === '/api/plugins/rescan') {
+      const m = await loadPlugin(), c = await config(), on = (c.plugins || []).some((p) => p.id === m?.id && p.enabled);
+      return json({ dir: '%APPDATA%\\PhoneBox\\plugins (demo)', plugins: m ? [{ folder: m.id, error: null, id: m.id, name: m.name, version: m.version, author: m.author, description: m.description, homepage: m.homepage,
+        permissions: m.permissions, settings: m.settings, backend: true, command: [m.backend.command, ...m.backend.args].join(' '), widgets: m.widgets.map((w) => ({ type: pluginType(m, w), name: w.name, icon: w.icon })),
+        enabled: on, status: on ? 'running' : 'off', lastError: null, restarts: 0, startedAt: on ? START : null }] : [] });
+    }
     if (path === '/api/volume' && method === 'POST') {
       // the agent answers with the new volume state (AudioSnapshot)
       const op = q.get('op'), level = q.has('level') ? +q.get('level') : null;
@@ -564,7 +615,12 @@
       return json(emit('goto', { page: decodeURIComponent(path.slice(10)), countdown: q.has('countdown') ? Math.max(0, Math.min(30, +q.get('countdown') || 0)) : null }));
     if (path === '/api/refresh' && method === 'POST') return json(emit('refresh'));
     // settings page
-    if (path === '/api/catalog') return json(await loadCatalog());
+    if (path === '/api/catalog') {
+      // with the example plugin's widgets, as the agent lists those of the installed plugins
+      const c = await loadCatalog(), m = await loadPlugin();
+      return json(!m ? c : { ...c, widgets: [...c.widgets, ...m.widgets.map((w) => ({ type: pluginType(m, w), category: 'Plugins', name: w.name, icon: w.icon || '🧩',
+        desc: `${w.desc || ''} (plugin: ${m.name} ${m.version})`, w: w.w, h: w.h, minW: w.minW || 1, minH: w.minH || 1, plugin: m.id, options: w.options || [] }))] });
+    }
     if (path === '/api/settings') {
       if (method === 'PUT') {
         // a save over settings that changed since this page loaded them is refused, as by the agent (X-Config-Version)

@@ -53,6 +53,10 @@ def build(out):
     shutil.copy(PAGES / 'demo.js', out / 'demo.js')
     (out / 'index.html').write_text(landing_html(), encoding='utf-8')
     for name in ('widgets.json', 'templates.json'): shutil.copy(AGENT / name, out / name)
+    # the example plugin's manifest and UI: the demo shows it as an installed community plugin (docs/PLUGINS.md)
+    plugin = ROOT / 'extras' / 'plugins' / 'http-status'
+    (out / 'plugins' / 'http-status' / 'ui').mkdir(parents=True)
+    for name in ('plugin.json', 'ui/endpoints.html'): shutil.copy(plugin / name, out / 'plugins' / 'http-status' / name)
     shutil.copy(AGENT / 'phonebox.ico', out / 'favicon.ico')
     shutil.copytree(WWW, out / 'panel', dirs_exist_ok=True, ignore=shutil.ignore_patterns('index.html'))
     (out / 'panel' / 'index.html').write_text(panel_html(), encoding='utf-8')
