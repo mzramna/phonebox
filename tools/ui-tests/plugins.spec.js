@@ -95,3 +95,20 @@ test('the settings page lists plugins; a click opens Configure first, then turn 
   await menu.filter({ hasText: 'Uninstall' }).click();
   await expect(page.locator('#toast')).toContainText('needs the PhoneBox agent');
 });
+
+test('the layout editor live preview draws plugin widgets like the phone does', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/widgets.json');
+  await page.evaluate((widgets) => {
+    localStorage.clear();
+    localStorage.setItem('pb-demo-config', JSON.stringify({ night: { enabled: false }, shortcuts: [], plugins: [{ id: 'http-status', enabled: true, settings: { authHeader: 'secret-in-preview' } }],
+      pages: [{ id: 'home', title: 'Home', widgets }] }));
+  }, WIDGETS.slice(0, 2));
+  await page.goto('/settings/#pages');
+  await page.locator('#stageSeg button[data-v="live"]').click();
+  const panel = page.frameLocator('#previewBox iframe');
+  await expect(panel.locator('.plugin-frame')).toHaveCount(1);
+  await expect(panel.frameLocator('.plugin-frame').locator('li')).toHaveCount(2);
+  await expect(panel.locator('.w-plugin.w-push')).toContainText('Endpoints up');
+  await expect(panel.locator('.w-plugin .empty')).toHaveCount(0);
+});

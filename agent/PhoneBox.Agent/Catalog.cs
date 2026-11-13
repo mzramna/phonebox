@@ -77,6 +77,13 @@ public static partial class Catalog
                     ["desc"] = (w.Desc ?? "") + $" (plugin: {p.Name} {p.Version})",
                     ["w"] = w.W, ["h"] = w.H, ["minW"] = w.MinW ?? 1, ["minH"] = w.MinH ?? 1,
                     ["plugin"] = p.Id,
+                    // what the panel needs to draw it (the layout editor's live preview builds the phone's plugin list from these)
+                    ["pluginName"] = p.Name,
+                    ["pluginVersion"] = p.Version,
+                    ["network"] = p.Has("network"),
+                    ["ui"] = w.Ui is not null,
+                    ["view"] = w.View is null ? null : JsonSerializer.SerializeToNode(w.View, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                    ["actions"] = new JsonArray(w.Actions.Select(a => (JsonNode?)a).ToArray()),
                     ["options"] = new JsonArray(w.Options.Select(o => JsonNode.Parse(o.GetRawText())).ToArray()),
                 });
             }

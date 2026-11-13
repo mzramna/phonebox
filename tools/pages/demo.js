@@ -619,7 +619,8 @@
       // with the example plugin's widgets, as the agent lists those of the installed plugins
       const c = await loadCatalog(), m = await loadPlugin();
       return json(!m ? c : { ...c, widgets: [...c.widgets, ...m.widgets.map((w) => ({ type: pluginType(m, w), category: 'Plugins', name: w.name, icon: w.icon || '🧩',
-        desc: `${w.desc || ''} (plugin: ${m.name} ${m.version})`, w: w.w, h: w.h, minW: w.minW || 1, minH: w.minH || 1, plugin: m.id, options: w.options || [] }))] });
+        desc: `${w.desc || ''} (plugin: ${m.name} ${m.version})`, w: w.w, h: w.h, minW: w.minW || 1, minH: w.minH || 1, plugin: m.id, options: w.options || [],
+        pluginName: m.name, pluginVersion: m.version, network: (m.permissions || []).includes('network'), ui: !!w.ui, view: w.view || null, actions: w.actions || [] }))] });
     }
     if (path === '/api/settings') {
       if (method === 'PUT') {

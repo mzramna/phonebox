@@ -106,7 +106,7 @@ W.plugin = {
     const meta = (cfg.plugins || []).find((p) => p.id === id);
     const wm = meta?.widgets?.find((x) => x.id === widget);
     if (!meta || !wm) {
-      box.append(h('div', 'empty', meta ? `${meta.name}: no widget "${widget}"` : `🧩 ${id}\nnot installed or off`));
+      box.append(h('div', 'empty', meta ? `${meta.name || id}: no widget "${widget}"` : `🧩 ${id}\nnot installed or off`));
       return {};
     }
     // the plugin publishes a widget's own data under "<page>.<widget>"
