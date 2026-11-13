@@ -8,7 +8,9 @@ pasta com um manifesto (`plugin.json`), um **backend** opcional (qualquer progra
 **UI** dos seus widgets.
 
 Esta página explica como os widgets nativos funcionam, como os plugins se encaixam nesse desenho e como escrever um.
-Um exemplo completo e funcional está em [`extras/plugins/http-status`](../extras/plugins/http-status).
+Exemplos funcionais estão em [`extras/plugins`](../extras/plugins): [`open-link`](../extras/plugins/open-link) é o menor
+(uma configuração, um widget-link no celular e uma ação que abre um site no navegador do computador) e
+[`http-status`](../extras/plugins/http-status) usa todas as partes (UI própria, visual nativo, notificações).
 
 - [Como os widgets nativos funcionam](#como-os-widgets-nativos-funcionam)
 - [Onde os plugins se encaixam](#onde-os-plugins-se-encaixam)
@@ -182,7 +184,8 @@ Dicas:
 - **Teste o backend à mão** primeiro: mande uma linha `init` pelo stdin e veja o que ele imprime
   (veja o [README](../extras/plugins/http-status/README.md) do exemplo).
 - Escreva logs com `{"type":"log",…}` ou no **stderr**; os dois vão para o log do agente (`agent.log`). Nunca imprima
-  outra coisa no stdout.
+  outra coisa no stdout, nem deixe que programas iniciados pelo plugin escrevam nele: eles o herdam (veja como o
+  [`open-link/main.py`](../extras/plugins/open-link/main.py) guarda uma cópia própria do stdout para o protocolo).
 - Faça flush do stdout a cada linha (Python: `flush=True`; o agente também define `PYTHONUNBUFFERED=1`).
 - Publique os dados de cada instância de widget na chave `"<página>.<widget>"` (de `instances[]`), e dados
   compartilhados em qualquer outra chave.

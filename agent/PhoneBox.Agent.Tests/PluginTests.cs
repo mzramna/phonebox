@@ -38,13 +38,30 @@ public sealed class PluginTests : IDisposable
 
     // ------------------------------------------------------------ manifest
 
-    [Fact]
-    public void TheShippedExamplePluginIsValid()
+    private static string ExamplesDir()
     {
         var dir = AppContext.BaseDirectory;
         while (dir is not null && !Directory.Exists(Path.Combine(dir, "extras", "plugins"))) dir = Path.GetDirectoryName(dir);
         Assert.NotNull(dir);
-        var (m, error) = PluginManifest.Load(Path.Combine(dir!, "extras", "plugins", "http-status"));
+        return Path.Combine(dir!, "extras", "plugins");
+    }
+
+    [Fact]
+    public void EveryShippedExamplePluginIsValid()
+    {
+        var registry = new PluginRegistry(ExamplesDir());
+        registry.Scan();
+        Assert.All(registry.All, f => Assert.Null(f.Error));
+        Assert.Equal(["http-status", "open-link"], registry.Valid.Select(m => m.Id).Order());
+        var link = registry.Get("open-link")!;
+        Assert.Equal(["open"], link.Widget("link")!.Actions);
+        Assert.NotNull(link.UiFile("link"));
+    }
+
+    [Fact]
+    public void TheShippedExamplePluginIsValid()
+    {
+        var (m, error) = PluginManifest.Load(Path.Combine(ExamplesDir(), "http-status"));
         Assert.Null(error);
         Assert.Equal("http-status", m!.Id);
         Assert.Equal(["authHeader"], PluginManifest.SecretKeys(m.Settings));

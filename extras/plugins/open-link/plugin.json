@@ -1,0 +1,29 @@
+{
+  "id": "open-link",
+  "name": "Open link",
+  "version": "0.1.0",
+  "author": "PhoneBox community",
+  "description": "A link on the phone that opens a web site in the computer's default browser. The site is set here, on the computer. The smallest useful PhoneBox plugin: one setting, one widget, one action.",
+  "homepage": "https://github.com/ersinkoc/phonebox/blob/main/docs/PLUGINS.md",
+  "apiVersion": 1,
+  "backend": {
+    "command": "python3",
+    "args": ["main.py"],
+    "windows": { "command": "py", "args": ["-3", "main.py"] }
+  },
+  "settings": [
+    { "key": "url", "label": "Site to open (http:// or https://)", "type": "text", "default": "https://github.com/ersinkoc/phonebox" },
+    { "key": "label", "label": "Text on the phone", "type": "text", "default": "Open site" }
+  ],
+  "widgets": [
+    {
+      "id": "link",
+      "name": "Open link",
+      "icon": "🔗",
+      "desc": "Tap to open the site set in Settings › Plugins › Open link in the computer's browser.",
+      "w": 3, "h": 2, "minW": 1, "minH": 1,
+      "actions": ["open"],
+      "ui": "ui/link.html"
+    }
+  ]
+}

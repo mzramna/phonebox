@@ -12,7 +12,8 @@
 - The agent starts only the plugins that are turned on, restarts a backend that exits with a growing delay, and passes
   a widget's action to it only if that widget exists on that page and declares the action.
 - Pages keep plugin widgets while the plugin is missing or off; the panel shows a placeholder instead.
-- Example plugin: [`extras/plugins/http-status`](extras/plugins/http-status) (Python, standard library only).
+- Example plugins (Python, standard library only): [`open-link`](extras/plugins/open-link), a link on the phone that
+  opens a site set on the computer in its default browser, and [`http-status`](extras/plugins/http-status).
 
 ## 0.9.4 — 2026-11-11
 

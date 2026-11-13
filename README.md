@@ -317,7 +317,8 @@ widgets, drawn either with a built-in look or with the plugin's own HTML in a sa
 them on, and a plugin's backend runs with your user's rights, so only turn on plugins you trust.
 
 [docs/PLUGINS.md](docs/PLUGINS.md) explains how widgets work and how to write a plugin
-([em português](docs/PLUGINS.pt-BR.md)); [`extras/plugins/http-status`](extras/plugins/http-status) is a complete example.
+([em português](docs/PLUGINS.pt-BR.md)). Examples: [`extras/plugins/open-link`](extras/plugins/open-link), the smallest
+one (a link on the phone that opens a site set on the computer), and [`extras/plugins/http-status`](extras/plugins/http-status).
 
 ## Rules
 

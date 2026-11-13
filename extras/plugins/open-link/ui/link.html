@@ -1,0 +1,29 @@
+<!-- The phone side of the Open link plugin: a big link. Tapping it asks the plugin to open the site on the computer.
+     The URL itself only lives in the computer's settings; this page just shows it. -->
+<style>
+  body { display: flex; }
+  button { flex: 1; margin: 0; border: 0; border-radius: inherit; background: transparent; color: var(--pb-text);
+    font: inherit; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; cursor: pointer; }
+  button:active { background: rgba(255, 255, 255, .06); }
+  .icon { font-size: clamp(20px, 22vmin, 44px); line-height: 1; }
+  .label { font-size: clamp(13px, 11vmin, 22px); font-weight: 700; color: var(--pb-accent); text-align: center; }
+  .host { font-size: 12px; color: var(--pb-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .busy { opacity: .5; }
+</style>
+<button id="go" disabled><span class="icon">🔗</span><span class="label" id="label">Open site</span><span class="host" id="host">…</span></button>
+<script>
+  const go = document.getElementById('go');
+  phonebox.on('state', (s) => {
+    const link = s && s.link;
+    if (!link) return;
+    document.getElementById('label').textContent = link.label;
+    document.getElementById('host').textContent = link.error || link.host;
+    go.disabled = !link.url;
+  });
+  go.addEventListener('click', async () => {
+    go.classList.add('busy');
+    try { await phonebox.action('open'); phonebox.toast('Opened on the computer', 'ok'); }
+    catch (e) { phonebox.toast(e.message, 'err'); }
+    go.classList.remove('busy');
+  });
+</script>

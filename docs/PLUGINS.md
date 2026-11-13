@@ -7,7 +7,9 @@ Home Assistant dashboards, container controls, a bridge to a browser extension. 
 (`plugin.json`), an optional **backend** (any program that reads and writes JSON lines) and its widgets' **UI**.
 
 This page explains how the built-in widgets work, how plugins fit into that design, and how to write one.
-A complete working example is in [`extras/plugins/http-status`](../extras/plugins/http-status).
+Working examples are in [`extras/plugins`](../extras/plugins): [`open-link`](../extras/plugins/open-link) is the smallest
+(one setting, a link widget on the phone, one action that opens a site in the computer's browser) and
+[`http-status`](../extras/plugins/http-status) uses every part (custom UI, built-in view, notifications).
 
 - [How the built-in widgets work](#how-the-built-in-widgets-work)
 - [How plugins fit in](#how-plugins-fit-in)
@@ -179,7 +181,8 @@ Tips:
 - **Test the backend by hand** first: pipe an `init` line into it and look at what it prints
   (see the example's [README](../extras/plugins/http-status/README.md)).
 - Write logs with `{"type":"log",…}` or to **stderr**; both end up in the agent's log (`agent.log`). Never print
-  anything else to stdout.
+  anything else to stdout, and keep programs you start from writing to it: they inherit it (see how
+  [`open-link/main.py`](../extras/plugins/open-link/main.py) keeps a private copy of stdout for the protocol).
 - Flush stdout after every line (Python: `flush=True`; the agent also sets `PYTHONUNBUFFERED=1`).
 - Give each widget instance its own data under the key `"<page>.<widget>"` (from `instances[]`), and shared data under
   any other key.
