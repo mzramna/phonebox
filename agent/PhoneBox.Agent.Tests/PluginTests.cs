@@ -426,6 +426,64 @@ public sealed class PluginTests : IDisposable
         Assert.Empty(Directory.GetDirectories(registry.Dir, ".staging-*"));
     }
 
+    // ------------------------------------------------------------ final review fixes
+
+    private const string Stubborn = """
+        import os, sys, time
+        with open(os.path.join(os.environ["PHONEBOX_DATA_DIR"], "pid"), "w") as f: f.write(str(os.getpid()))
+        time.sleep(600)  # ignores "shutdown": the agent has to end it
+        """;
+
+    private static bool Alive(int pid)
+    {
+        try { using var p = System.Diagnostics.Process.GetProcessById(pid); return !p.HasExited; }
+        catch (ArgumentException) { return false; }
+    }
+
+    [Fact]
+    public async Task ShuttingDownWaitsForASidecarThatWasJustTurnedOff()
+    {
+        if (Python() is not { } python) return;
+        Plugin("stub", Manifest("stub", extra: $$""","backend":{"command":{{JsonSerializer.Serialize(python)}},"args":["main.py"]}"""), ("main.py", Stubborn));
+        var (host, _, cfg) = NewHost("""{"plugins":[{"id":"stub","enabled":true}]}""");
+        var pidFile = Path.Combine(host.DataDir("stub"), "pid");
+        host.Reconcile(force: true);
+        await Until(() => File.Exists(pidFile) && File.ReadAllText(pidFile).Length > 0);
+        var pid = int.Parse(File.ReadAllText(pidFile));
+        Assert.Null(cfg.Save("""{"plugins":[{"id":"stub","enabled":false}]}"""));
+        host.Reconcile(force: true); // stops it in the background…
+        await host.StopAsync(default); // …and the agent shuts down right away
+        Assert.False(Alive(pid), "the sidecar outlived the agent");
+    }
+
+    [Fact]
+    public async Task AFolderWithTheIdThatDidNotLoadCanBeReplacedByAnUpdate()
+    {
+        Plugin("fixme", "{ broken");
+        var (host, registry, _) = NewHost();
+        var (_, error) = await host.InstallAsync(Zip(("plugin.json", Manifest("fixme"))), false, default);
+        Assert.Contains("exists but is not loaded", error);
+        (_, error) = await host.InstallAsync(Zip(("plugin.json", Manifest("fixme"))), true, default);
+        Assert.Null(error);
+        Assert.Equal("fixme", registry.Get("fixme")!.Id);
+    }
+
+    [Fact]
+    public void ThePhoneGetsAHashOfEachWidgetUiThatChangesWithTheFile()
+    {
+        var dir = Plugin("hashed", Manifest("hashed", """[{"id":"w","name":"W","ui":"ui.html"}]"""), ("ui.html", "<p>one</p>"));
+        var registry = new PluginRegistry(Path.Combine(_root, "plugins"));
+        registry.Scan();
+        string Hash() => JsonDocument.Parse(JsonSerializer.Serialize(Catalog.PluginPublic("hashed"))).RootElement.GetProperty("widgets")[0].GetProperty("UiHash").GetString()!;
+        var first = Hash();
+        Assert.Matches("^[0-9a-f]{16}$", first);
+        var scans = registry.Scans;
+        File.WriteAllText(Path.Combine(dir, "ui.html"), "<p>two</p>");
+        registry.Scan();
+        Assert.NotEqual(first, Hash());
+        Assert.True(registry.Scans > scans); // part of the phone's config version (Program.PublicVersion)
+    }
+
     private static async Task Until(Func<bool> condition)
     {
         for (var i = 0; i < 100 && !condition(); i++) await Task.Delay(100);

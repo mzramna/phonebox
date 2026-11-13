@@ -114,10 +114,12 @@ enquanto o computador está fora:
 | O quê | Guardado como | Substituído / removido |
 |---|---|---|
 | Metadados (nome, versão, widgets, ações) | junto com a config (`cfg`) | a cada nova config |
-| HTML do widget | `pb-plugin-ui:<plugin>@<versão>/<widget>` | quando o computador envia uma cópia diferente; versões antigas e plugins que não estão mais ligados são removidos |
+| HTML do widget | `pb-plugin-ui:<plugin>@<versão>#<hash>/<widget>` | quando a versão ou o arquivo muda (o agente envia um hash de cada arquivo de UI); cópias antigas e plugins que não estão mais ligados são removidos |
 | Últimos dados | `pluginState` | a cada mudança |
 
-Por isso instalar, atualizar ou remover um plugin nunca exige um app novo.
+O celular recarrega essa descrição sempre que as configurações mudam ou a pasta de plugins é varrida (instalar, atualizar
+ou remover um plugin, Rescan), por isso instalar, atualizar ou remover um plugin nunca exige um app novo nem salvar as
+configurações.
 
 ## Instalando e gerenciando plugins
 
@@ -206,6 +208,8 @@ Dicas:
 - Publique os dados de cada instância de widget na chave `"<página>.<widget>"` (de `instances[]`), e dados
   compartilhados em qualquer outra chave.
 - Use a pasta de dados em `PHONEBOX_DATA_DIR` para cache e estado, não a pasta do plugin (uma atualização a substitui).
+- Depois de editar os arquivos de um plugin à mão, clique em **Rescan** (o celular recebe o `plugin.json` ou o HTML do
+  widget alterados) e depois em **Restart**: um rescan só reinicia um backend em execução quando o `plugin.json` mudou.
 - Para desenvolver, rode um segundo agente: `PhoneBoxAgent --config ./dev/config.json --port 8799 --plugins ./plugins`
   e abra `http://127.0.0.1:8799/`.
 

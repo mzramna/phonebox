@@ -31,6 +31,7 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
     private readonly ConcurrentDictionary<string, Queue<long>> _notifyTimes = new();
     private readonly ConcurrentDictionary<string, byte> _busy = new(); // being installed or removed: not started meanwhile
     private readonly ConcurrentDictionary<string, byte> _stopping = new(); // a sidecar still shutting down: no second one yet
+    private readonly ConcurrentDictionary<PluginRunner, Task> _stops = new(); // those stops, so shutting down waits for them
     private readonly SemaphoreSlim _install = new(1, 1);
     private readonly Lock _reconcile = new();
     private volatile bool _dirty = true;
@@ -61,7 +62,9 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
     {
         lock (_reconcile) _closing = true;
         await base.StopAsync(ct);
-        await Task.WhenAll(_runners.Values.Select(r => r.StopAsync()));
+        // the running sidecars and those already being stopped (turned off or updated just before): none may outlive the agent
+        var all = Task.WhenAll(_runners.Values.Select(r => r.StopAsync()).Concat(_stops.Values));
+        await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(10), CancellationToken.None));
         _runners.Clear();
     }
 
@@ -105,8 +108,9 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
     private void StopInBackground(string id, PluginRunner runner)
     {
         _stopping[id] = 0;
-        _ = runner.StopAsync().ContinueWith(stopped =>
+        _stops[runner] = runner.StopAsync().ContinueWith(stopped =>
         {
+            _stops.TryRemove(runner, out _);
             _stopping.TryRemove(id, out _);
             _dirty = true;
             try { Reconcile(force: true); } // start its successor (an updated plugin) right away
@@ -241,10 +245,16 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
             // the plugin may already be there under another folder name (copied in by hand)
             var installed = registry.All.FirstOrDefault(f => f.Manifest?.Id == m.Id);
             var occupant = registry.All.FirstOrDefault(f => string.Equals(f.Folder, m.Id, StringComparison.OrdinalIgnoreCase));
-            if (occupant is not null && occupant.Manifest?.Id != m.Id)
+            if (occupant?.Manifest is { } other && other.Id != m.Id)
             {
                 PluginInstaller.TryDeleteDir(staging!);
                 return (null, $"the folder '{occupant.Folder}' in the plugins folder belongs to another plugin; rename or remove it first");
+            }
+            // a folder with this name that did not load (a broken copy, or a duplicate of the installed one) may be replaced
+            if (occupant is { Manifest: null } && !replace)
+            {
+                PluginInstaller.TryDeleteDir(staging!);
+                return (null, $"a folder named '{occupant.Folder}' exists but is not loaded ({occupant.Error}) (choose Update to replace it)");
             }
             if ((installed is not null || Directory.Exists(target)) && !replace)
             {
@@ -256,6 +266,7 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
             {
                 if (old is not null) await old.StopAsync();
                 if (installed is not null) Directory.Delete(Path.Combine(registry.Dir, installed.Folder), true);
+                if (occupant is not null && Directory.Exists(Path.Combine(registry.Dir, occupant.Folder))) Directory.Delete(Path.Combine(registry.Dir, occupant.Folder), true);
                 if (Directory.Exists(target)) Directory.Delete(target, true);
                 Directory.Move(staging!, target);
             }

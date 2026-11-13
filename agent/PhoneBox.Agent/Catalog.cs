@@ -99,7 +99,7 @@ public static partial class Catalog
         p.Name,
         p.Version,
         network = p.Has("network"),
-        widgets = p.Widgets.Select(w => new { w.Id, type = p.TypeOf(w), w.Name, w.Icon, ui = w.Ui is not null, w.View, w.Actions }),
+        widgets = p.Widgets.Select(w => new { w.Id, type = p.TypeOf(w), w.Name, w.Icon, ui = w.Ui is not null, w.UiHash, w.View, w.Actions }),
     };
 
     [GeneratedRegex("^plugin\\.[a-z0-9][a-z0-9-]{1,39}\\.[a-z0-9][a-z0-9-]{0,39}$")]

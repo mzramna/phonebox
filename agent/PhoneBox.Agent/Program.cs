@@ -322,7 +322,7 @@ object State(IServiceProvider sp, long? ev)
         update = upd.Status() is { } u && (u.AppUpdate || u.AgentUpdate) ? new { latest = u.Latest, app = u.AppUpdate, agent = u.AgentUpdate } : null,
         ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         host = Environment.MachineName,
-        cfgVersion = sp.GetRequiredService<ConfigStore>().Version,
+        cfgVersion = PublicVersion(sp.GetRequiredService<ConfigStore>(), sp.GetRequiredService<PluginRegistry>()),
         pushVersion = push.Version,
         pluginsVersion = sp.GetRequiredService<PluginHost>().Version,
         evSeq = push.Seq,
@@ -504,8 +504,8 @@ app.MapPost("/api/plugins/{id}/action", async (string id, string? page, string? 
     return Results.Json(new { ok = r.Ok, error = r.Error, data = r.Data }, statusCode: r.Ok ? 200 : 400);
 });
 
-app.MapGet("/api/config", (ConfigStore cfg, HttpRequest req) =>
-    Results.Json(new { version = cfg.Version, config = cfg.Get().ToPublic(req.Headers["X-PhoneBox-Device"].ToString()) }));
+app.MapGet("/api/config", (ConfigStore cfg, PluginRegistry plugins, HttpRequest req) =>
+    Results.Json(new { version = PublicVersion(cfg, plugins), config = cfg.Get().ToPublic(req.Headers["X-PhoneBox-Device"].ToString()) }));
 
 // Phones that have talked to this agent, with their settings (Settings › Phones).
 app.MapGet("/api/phones", (ConfigStore cfg) =>
@@ -587,6 +587,10 @@ single.ReleaseMutex();
 single.Dispose();
 if (AppRestart.Requested && Environment.ProcessPath is { } exe)
     System.Diagnostics.Process.Start(AppRestart.StartInfo(exe, args));
+
+// What the phone's config depends on: the settings file and the plugins found (their versions, widgets and UIs), so a
+// plugin added, updated or removed reaches the phone without saving the settings. /api/state and /api/config must agree.
+static long PublicVersion(ConfigStore cfg, PluginRegistry plugins) => cfg.Version + plugins.Scans;
 
 static void AddMonitor<T>(IServiceCollection s) where T : class, IHostedService
 {

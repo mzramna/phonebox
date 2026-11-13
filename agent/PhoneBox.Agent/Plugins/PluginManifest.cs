@@ -78,7 +78,12 @@ public sealed partial class PluginManifest
         if (m is null) return (null, $"{FileName} is empty");
         m.Directory = Path.GetFullPath(dir);
         var error = m.Validate();
-        return error is null ? (m, null) : (null, error);
+        if (error is not null) return (null, error);
+        // the phone keeps each widget's HTML; the hash tells it to fetch again when the file changed (even without a new version)
+        foreach (var w in m.Widgets)
+            if (m.UiFile(w.Id) is { } ui)
+                w.UiHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(ui)))[..16].ToLowerInvariant();
+        return (m, null);
     }
 
     /// <summary>Strict checks: everything a plugin declares ends up in URLs, CSS classes, the catalog or a process start.</summary>
@@ -233,6 +238,9 @@ public sealed class PluginWidget
     public string? Ui { get; set; }
     /// <summary>Or a built-in look: one of the plugin's state keys rendered like a "Pushed value" widget.</summary>
     public PluginView? View { get; set; }
+
+    /// <summary>A short hash of the <see cref="Ui"/> file, computed when the manifest is loaded.</summary>
+    [JsonIgnore] public string? UiHash { get; set; }
 }
 
 public sealed class PluginView

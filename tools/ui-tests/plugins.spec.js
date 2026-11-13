@@ -117,7 +117,7 @@ test('the phone keeps a plugin UI and its last data, and forgets them when the p
   await show(page);
   await expect(page.frameLocator('.plugin-frame').locator('li')).toHaveCount(2);
   const stored = () => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('pb-plugin-ui:')));
-  await expect.poll(stored).toEqual(['pb-plugin-ui:http-status@0.1.0/endpoints']);
+  await expect.poll(stored).toEqual(['pb-plugin-ui:http-status@0.1.0#0.1.0/endpoints']); // <plugin>@<version>#<ui hash>/<widget>
   expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('pluginState')).plugins['http-status']))).toContain('home.eps');
 
   // the computer can no longer hand out the UI: the stored copy is drawn

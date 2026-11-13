@@ -12,10 +12,11 @@ import { W } from '../registry.js';
 // The app ships no plugin: everything a plugin widget needs arrives over the connection and is kept on the phone, so
 // plugin widgets draw at once on start and keep working while the computer is away. Kept in localStorage:
 //  - the plugins' metadata, with the rest of the config ("cfg", main.js);
-//  - each widget UI's HTML, under "pb-plugin-ui:<plugin>@<version>/<widget>" (a new version replaces it);
+//  - each widget UI's HTML, under "pb-plugin-ui:<plugin>@<version>#<hash>/<widget>" (a new version or file replaces it);
 //  - the plugins' last data ("pluginState", main.js).
 const UI_KEY = 'pb-plugin-ui:';
-const uiFetches = new Map(); // "<plugin>@<version>/<widget>" -> Promise<html> (one request per start and widget)
+const uiFetches = new Map(); // "<plugin>@<version>#<hash>/<widget>" -> Promise<html> (one request per start and widget)
+const uiKey = (p, w) => `${p.id}@${p.version}#${w.uiHash || ''}/${w.id}`;
 
 const uiStored = (key) => { try { return localStorage.getItem(UI_KEY + key); } catch (_) { return null; } };
 function storeUi(key, html) {
@@ -29,7 +30,7 @@ function storeUi(key, html) {
 /** Forgets the stored UIs of plugins that are no longer installed or turned on (called when a new config arrives). */
 export function prunePluginCache(plugins) {
   try {
-    const keep = new Set((plugins || []).flatMap((p) => (p.widgets || []).map((w) => `${UI_KEY}${p.id}@${p.version}/${w.id}`)));
+    const keep = new Set((plugins || []).flatMap((p) => (p.widgets || []).map((w) => UI_KEY + uiKey(p, w))));
     for (const k of Object.keys(localStorage)) if (k.startsWith(UI_KEY) && !keep.has(k)) localStorage.removeItem(k);
   } catch (_) {}
 }
@@ -78,7 +79,7 @@ function frameWidget(box, ctx, meta, wm, key) {
   frame.setAttribute('referrerpolicy', 'no-referrer');
   frame.title = wm.name;
   box.append(frame);
-  const cacheKey = `${meta.id}@${meta.version}/${wm.id}`;
+  const cacheKey = uiKey(meta, wm);
   if (!uiFetches.has(cacheKey)) uiFetches.set(cacheKey, api(`/plugins/${encodeURIComponent(meta.id)}/ui/${encodeURIComponent(wm.id)}`, 'GET', 8000)
     .then((html) => { storeUi(cacheKey, html); return html; }, (e) => { uiFetches.delete(cacheKey); throw e; }));
   let loaded = false, sentState, sentItem;

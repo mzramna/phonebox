@@ -121,7 +121,7 @@
 
   // as Catalog.PluginPublic: what the panel needs to draw a plugin's widgets (no settings)
   const publicPlugin = (m) => ({ id: m.id, name: m.name, version: m.version, network: (m.permissions || []).includes('network'),
-    widgets: m.widgets.map((w) => ({ id: w.id, type: pluginType(m, w), name: w.name, icon: w.icon, ui: !!w.ui, view: w.view || null, actions: w.actions || [] })) });
+    widgets: m.widgets.map((w) => ({ id: w.id, type: pluginType(m, w), name: w.name, icon: w.icon, ui: !!w.ui, uiHash: w.ui ? m.version : null, view: w.view || null, actions: w.actions || [] })) });
 
   // made-up results of the example plugin's checks, published as the plugin's state (/api/plugins/state)
   function pluginState(c, m) {

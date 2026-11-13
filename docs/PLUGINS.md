@@ -112,10 +112,11 @@ after a restart and keep showing their last data while the computer is away:
 | What | Stored as | Replaced / removed |
 |---|---|---|
 | Metadata (name, version, widgets, actions) | with the config (`cfg`) | with every new config |
-| Widget HTML | `pb-plugin-ui:<plugin>@<version>/<widget>` | when the computer sends a different copy; older versions and plugins no longer turned on are removed |
+| Widget HTML | `pb-plugin-ui:<plugin>@<version>#<hash>/<widget>` | when the version or the file changes (the agent sends a hash of each UI file); older copies and plugins no longer turned on are removed |
 | Last data | `pluginState` | on every change |
 
-Installing, updating or removing a plugin therefore never needs a new app.
+The phone reloads this description whenever the settings change or the plugins folder is scanned (adding, updating or
+removing a plugin, Rescan), so installing, updating or removing a plugin never needs a new app or a settings save.
 
 ## Installing and managing plugins
 
@@ -202,6 +203,8 @@ Tips:
 - Give each widget instance its own data under the key `"<page>.<widget>"` (from `instances[]`), and shared data under
   any other key.
 - Use the data folder in `PHONEBOX_DATA_DIR` for caches and state, not the plugin folder (an update replaces it).
+- After editing a plugin's files by hand, press **Rescan** (the phone picks up a changed `plugin.json` or widget HTML)
+  and then **Restart** the plugin: a rescan restarts a running backend only when its `plugin.json` changed.
 - For a development loop, run a second agent: `PhoneBoxAgent --config ./dev/config.json --port 8799 --plugins ./plugins`
   and open `http://127.0.0.1:8799/`.
 
