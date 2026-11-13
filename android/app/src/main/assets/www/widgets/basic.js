@@ -840,16 +840,18 @@ W.command = {
 
 W.push = {
   needs: ['push', 'tick'],
-  create(box, { o }) {
+  // ctx.source / ctx.empty: plugin "view" widgets (plugins.js) show a plugin's data the same way
+  create(box, { o, source, empty }) {
     const key = o.key || '';
+    const get = source || (() => D.push[key]);
     let lastAt = -1;
     const render = () => {
-      const item = D.push[key];
+      const item = get();
       if (!item) {
         if (lastAt === 0) return;
         lastAt = 0;
         box.style.removeProperty('--c');
-        box.replaceChildren(h('div', 'w-title', o.title || key), h('div', 'push-empty', 'No data yet', h('code', null, `POST /api/push/${key}`)));
+        box.replaceChildren(h('div', 'w-title', o.title || key), h('div', 'push-empty', empty || 'No data yet', empty ? null : h('code', null, `POST /api/push/${key}`)));
         return;
       }
       const ageEl = box.querySelector('.push-age');

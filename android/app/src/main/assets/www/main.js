@@ -11,6 +11,7 @@ import './widgets/pc.js';
 import './widgets/sky.js';
 import './widgets/web.js';
 import './widgets/controls.js';
+import './widgets/plugins.js';
 
 // PhoneBox desk panel. Pages are 12 × 6 grids of widgets, designed in the agent's settings page.
 // The panel talks to the PhoneBox agent through "/agent/*", which the Android shell proxies over USB
@@ -69,9 +70,10 @@ export let rulesPaused = null;    // unix ms until which the agent's rules are p
 export let nightOn = null;
 export let evSeq = null;          // last agent event seen (notifications, page switches…)
 export let pushVersion = null;
+export let pluginsVersion = null; // data published by community plugins (D.plugins)
 
 /** Latest data from the agent and the web; widgets read from here. */
-export const D = { state: null, quotas: null, work: null, procs: null, push: {}, weather: null, calendar: null, notes: store.get('notes', []) };
+export const D = { state: null, quotas: null, work: null, procs: null, push: {}, plugins: {}, weather: null, calendar: null, notes: store.get('notes', []) };
 
 export const HIST = 90;
 export const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [] };
@@ -716,7 +718,7 @@ export function handleEvent(e) {
   else if (e.kind === 'notify' && e.data) handleNotify(e.data);
   else if (e.kind === 'goto' && e.data) requestPage(e.data);
   else if (e.kind === 'back' && e.data) requestBack(e.data.rule);
-  else if (e.kind === 'refresh') { loadConfig(); loadQuotas(); loadWork(); loadPush(); loadWeather(true); loadCalendar(); }
+  else if (e.kind === 'refresh') { loadConfig(); loadQuotas(); loadWork(); loadPush(); loadPlugins(); loadWeather(true); loadCalendar(); }
   else if (e.kind === 'reload') location.reload();
 }
 
@@ -766,7 +768,8 @@ export function buildLayout() {
     const pl = portrait ? portraitLayout(p.widgets) : null;
     if (pl) { grid.style.gridTemplateColumns = 'repeat(6, minmax(0, 1fr))'; grid.style.gridTemplateRows = `repeat(${pl.rows}, minmax(0, 1fr))`; }
     for (const w of p.widgets) {
-      const def = W[w.type];
+      // community plugin widgets ("plugin.<plugin>.<widget>") are all drawn by W.plugin (widgets/plugins.js)
+      const def = W[w.type] || (w.type.startsWith('plugin.') ? W.plugin : null);
       if (!def) continue;
       const box = h('div', `w w-${w.type}${def.bare ? ' bare' : ' card'}`);
       const appearance = PhoneBoxAppearance.resolve(cfg.display?.appearance, p.appearance, w.appearance);
@@ -1333,9 +1336,18 @@ export async function loadPush() {
   } catch (_) {}
 }
 
+export async function loadPlugins() {
+  try {
+    const r = await api('/plugins/state');
+    D.plugins = r.plugins || {};
+    pluginsVersion = r.version;
+    emit('plugins');
+  } catch (_) {}
+}
+
 export function setOnline(on) {
   document.body.classList.toggle('offline', !on);
-  if (on && online !== true) { loadConfig(); loadQuotas(); loadWork(); loadPush(); loadApprovals(); loadCalendar(); }
+  if (on && online !== true) { loadConfig(); loadQuotas(); loadWork(); loadPush(); loadPlugins(); loadApprovals(); loadCalendar(); }
   const changed = online !== on;
   online = on;
   if (changed) emit('state');
@@ -1348,6 +1360,7 @@ export function applyState(s) {
   setOnline(true);
   if (s.cfgVersion !== undefined && cfgVersion !== null && s.cfgVersion !== cfgVersion) loadConfig();
   if (s.pushVersion !== undefined && s.pushVersion !== pushVersion) loadPush();
+  if (s.pluginsVersion !== undefined && s.pluginsVersion !== pluginsVersion) loadPlugins();
   if (evSeq != null && s.evSeq != null && s.evSeq < evSeq) evSeq = s.evSeq; // the agent restarted: it counts from 0 again
   if (evSeq != null) for (const e of s.events || []) if (e.seq > evSeq) handleEvent(e);
   evSeq = Math.max(evSeq ?? 0, s.evSeq ?? 0);
