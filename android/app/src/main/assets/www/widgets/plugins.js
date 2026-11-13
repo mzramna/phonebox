@@ -52,7 +52,7 @@ export async function pluginAction(plugin, page, widget, name, args) {
 /** JSON that is safe inside a <script> element. */
 const scriptJson = (v) => JSON.stringify(v ?? null).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 
-export function pluginPrelude({ plugin, widget, instance, options, network }) {
+export function pluginPrelude({ plugin, widget, instance, options, network, nonce = '' }) {
   const csp = `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:${network ? ' https:' : ''}; font-src data:; media-src data:${network ? '; connect-src https:' : ''}`;
   const v = (name, fallback) => cssVar(name) || fallback;
   return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -66,6 +66,7 @@ on:function(k,f){(subs[k]=subs[k]||[]).push(f);if(data[k]!==undefined)try{f(data
 action:function(name,args){return new Promise(function(ok,fail){var id=++seq;reqs[id]={ok:ok,fail:fail};post({phonebox:'action',req:id,name:String(name),args:args})})},
 goto:function(p){post({phonebox:'goto',page:p})},
 toast:function(text,kind){post({phonebox:'toast',text:String(text),kind:kind})}};
+post({phonebox:'hello',nonce:${scriptJson(nonce)}});
 addEventListener('message',function(e){var m=e.data;if(!m||e.source!==parent)return;
 if(m.phonebox==='data'){data[m.kind]=m.value;(subs[m.kind]||[]).forEach(function(f){try{f(m.value)}catch(err){console.error(err)}})}
 else if(m.phonebox==='result'&&reqs[m.req]){var r=reqs[m.req];delete reqs[m.req];m.ok?r.ok(m.data):r.fail(new Error(m.error||'failed'))}});})();<\/script>`;
@@ -91,21 +92,39 @@ function frameWidget(box, ctx, meta, wm, key) {
     sentState = state;
     sentItem = item;
   };
-  let shown = null;
+  // The CSP cannot stop the frame from navigating itself (location = …, <meta http-equiv=refresh>). Each page the
+  // panel loads says hello first, with a fresh nonce; a load without it means the frame left its page: stop the widget.
+  let shown = null, nonce = '', greeted = false, started = false;
   const show = (html) => {
     if (html === shown) return;
     shown = html;
     loaded = false;
-    frame.srcdoc = pluginPrelude({ plugin: meta.id, widget: wm.id, instance: { page: ctx.page.id, id: ctx.w.id, key }, options: ctx.o, network: meta.network }) + html;
+    greeted = false;
+    nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    started = true;
+    frame.srcdoc = pluginPrelude({ plugin: meta.id, widget: wm.id, instance: { page: ctx.page.id, id: ctx.w.id, key }, options: ctx.o, network: meta.network, nonce }) + html;
+  };
+  const stop = () => {
+    window.removeEventListener('message', onMsg);
+    frame.remove();
+    box.replaceChildren(h('div', 'empty', `${meta.name || meta.id}: its widget tried to leave the panel and was stopped`));
+    console.warn(`plugin ${meta.id}: widget ${wm.id} navigated away from its page`);
   };
   // the stored copy draws at once (also offline); the computer's copy replaces it only if it changed
   const stored = uiStored(cacheKey);
   if (stored != null) show(stored);
   uiFetches.get(cacheKey).then(show, () => { if (stored == null) box.replaceChildren(h('div', 'empty', `${wm.name}: could not load the widget from the computer`)); });
-  frame.addEventListener('load', () => { loaded = true; send(true); });
+  frame.addEventListener('load', () => {
+    if (!started) return; // the empty frame before the plugin's page is set
+    if (!greeted) { stop(); return; }
+    greeted = false; // the next load must say hello again
+    loaded = true;
+    send(true);
+  });
   const onMsg = async (e) => {
     const m = e.data;
     if (e.source !== frame.contentWindow || !m || typeof m !== 'object') return;
+    if (m.phonebox === 'hello') { if (m.nonce === nonce) greeted = true; return; }
     if (m.phonebox === 'action') {
       const reply = (r) => post({ phonebox: 'result', req: m.req, ...r });
       if (!(wm.actions || []).includes(m.name)) { reply({ ok: false, error: `the widget does not declare the action "${m.name}"` }); return; }

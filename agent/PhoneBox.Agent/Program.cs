@@ -271,7 +271,7 @@ app.MapGet("/api/info", (AdbReverse adb, ConfigStore cfg) => Results.Json(new
 app.MapPost("/api/phone/open", async (AdbReverse adb) => { await adb.OpenPanelAsync(); return Results.Ok(); });
 
 // Widget types and page templates for the settings page's layout editor.
-app.MapGet("/api/catalog", () => Results.Text($"{{\"cols\":{Catalog.Cols},\"rows\":{Catalog.Rows},\"widgets\":{Catalog.AllWidgetsJson},\"templates\":{Catalog.TemplatesJson}}}",
+app.MapGet("/api/catalog", () => Results.Text($"{{\"cols\":{Catalog.Cols},\"rows\":{Catalog.Rows},\"widgets\":{Catalog.AllWidgetsJson},\"templates\":{Catalog.TemplatesJson},\"plugins\":{Catalog.AllPluginsJson}}}",
     "application/json; charset=utf-8"));
 
 // ---------------------------------------------------------------- webhook API: push data and events into the panel
@@ -473,7 +473,7 @@ app.MapGet("/api/widget/{page}/{widget}", (string page, string widget, bool? for
 // ---------------------------------------------------------------- community plugins (docs/PLUGINS.md)
 // Settings page (local only): the plugins found, rescanning the folder, restarting one.
 app.MapGet("/api/plugins", (PluginHost host) => Results.Json(host.Status()));
-app.MapPost("/api/plugins/rescan", (PluginRegistry registry, PluginHost host) => { registry.Scan(); host.Reconcile(); return Results.Json(host.Status()); });
+app.MapPost("/api/plugins/rescan", (PluginRegistry registry, PluginHost host) => { registry.Scan(); host.Reconcile(force: true); return Results.Json(host.Status()); });
 // Add or update a plugin from a .zip (body), and remove one; local only like the rest of the settings.
 app.MapPost("/api/plugins/install", async (bool? replace, HttpRequest req, PluginHost host, CancellationToken ct) =>
 {
@@ -483,7 +483,7 @@ app.MapPost("/api/plugins/install", async (bool? replace, HttpRequest req, Plugi
 });
 app.MapDelete("/api/plugins/{id}", async (string id, bool? keepData, PluginHost host) =>
     await host.UninstallAsync(id, keepData == true) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
-app.MapPost("/api/plugins/{id}/restart", (string id, PluginHost host) => { host.Restart(id); return Results.Ok(); });
+app.MapPost("/api/plugins/{id}/restart", async (string id, PluginHost host) => { await host.RestartAsync(id); return Results.Ok(); });
 // Panel (also over Wi-Fi): the data the plugins publish, their widget UIs, and actions by page and widget id.
 app.MapGet("/api/plugins/state", (PluginHost host) => Results.Json(host.Snapshot()));
 app.MapGet("/api/plugins/{id}/ui/{widget}", (string id, string widget, ConfigStore cfg) =>

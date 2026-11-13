@@ -32,6 +32,9 @@ public sealed partial class PluginManifest
     /// <summary>The folder the manifest was loaded from.</summary>
     [JsonIgnore] public string Directory { get; private set; } = "";
 
+    /// <summary>The folder and a hash of plugin.json: a rescan restarts a running plugin only when this changes.</summary>
+    [JsonIgnore] public string Fingerprint { get; private set; } = "";
+
     public static readonly string[] KnownPermissions = ["notify", "network"];
 
     public bool Has(string permission) => Permissions.Contains(permission);
@@ -67,7 +70,9 @@ public sealed partial class PluginManifest
         try
         {
             if (new FileInfo(file).Length > 256 * 1024) return (null, $"{FileName} is too large");
-            m = JsonSerializer.Deserialize<PluginManifest>(File.ReadAllText(file), ReadOpts);
+            var bytes = File.ReadAllBytes(file);
+            m = JsonSerializer.Deserialize<PluginManifest>(bytes, ReadOpts);
+            if (m is not null) m.Fingerprint = Path.GetFullPath(dir) + "|" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return (null, $"{FileName}: {ex.Message}"); }
         if (m is null) return (null, $"{FileName} is empty");

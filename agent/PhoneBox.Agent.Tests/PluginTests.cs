@@ -332,6 +332,100 @@ public sealed class PluginTests : IDisposable
         Assert.Equal("no such plugin", await host.UninstallAsync("..", false));
     }
 
+    // ------------------------------------------------------------ review fixes: one sidecar per plugin, ordered restarts
+
+    private const string Recorder = """
+        import json, os, sys
+        log = os.path.join(os.environ["PHONEBOX_DATA_DIR"], "events.log")
+        def note(what):
+            with open(log, "a") as f: f.write(what + "\n")
+        note("start")
+        for line in sys.stdin:
+            m = json.loads(line)
+            if m["type"] == "shutdown":
+                note("stop")
+                break
+        """;
+
+    private static string? Python() =>
+        ToolProcess.Find("python3") is { } p3 && !p3.Contains("WindowsApps") ? "python3" : ToolProcess.Find("python") is { } p && !p.Contains("WindowsApps") ? "python" : null;
+
+    private (PluginHost Host, PluginRegistry Registry, string Events)? RecorderHost(string python)
+    {
+        Plugin("rec", Manifest("rec", extra: $$""","backend":{"command":{{JsonSerializer.Serialize(python)}},"args":["main.py"]}"""), ("main.py", Recorder));
+        var (host, registry, _) = NewHost("""{"plugins":[{"id":"rec","enabled":true}]}""");
+        return (host, registry, Path.Combine(host.DataDir("rec"), "events.log"));
+    }
+
+    private static string[] Events(string file) => File.Exists(file) ? File.ReadAllLines(file) : [];
+
+    [Fact]
+    public async Task ConcurrentReconcilesStartOneSidecarAndAnUnchangedRescanKeepsIt()
+    {
+        if (Python() is not { } python) return;
+        var (host, registry, events) = RecorderHost(python)!.Value;
+        try
+        {
+            Parallel.For(0, 24, _ => host.Reconcile(force: true));
+            await Until(() => Events(events).Length > 0);
+            await Task.Delay(800);
+            Assert.Equal(["start"], Events(events));
+
+            registry.Scan(); // new manifest objects, same plugin.json
+            host.Reconcile(force: true);
+            await Task.Delay(800);
+            Assert.Equal(["start"], Events(events));
+
+            var manifest = Path.Combine(registry.Dir, "rec", "plugin.json");
+            File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("1.0.0", "1.0.1")); // an update: restart, in order
+            registry.Scan();
+            host.Reconcile(force: true);
+            await Until(() => Events(events).Length == 3);
+            Assert.Equal(["start", "stop", "start"], Events(events));
+        }
+        finally { await host.StopAsync(default); }
+    }
+
+    [Fact]
+    public async Task RestartWaitsForTheOldSidecarToExit()
+    {
+        if (Python() is not { } python) return;
+        var (host, _, events) = RecorderHost(python)!.Value;
+        try
+        {
+            host.Reconcile(force: true);
+            await Until(() => Events(events).Length == 1);
+            await host.RestartAsync("rec");
+            await Until(() => Events(events).Length == 3);
+            Assert.Equal(["start", "stop", "start"], Events(events));
+        }
+        finally { await host.StopAsync(default); }
+    }
+
+    [Fact]
+    public async Task InstallRefusesDuplicateNamesAndFindsAPluginCopiedInByHand()
+    {
+        var (host, registry, _) = NewHost();
+        var (_, error) = await host.InstallAsync(Zip(("plugin.json", Manifest("dup")), ("notes.txt", "a"), ("NOTES.txt", "b")), false, default);
+        Assert.Contains("same file twice", error);
+        Assert.Empty(Directory.GetDirectories(registry.Dir));
+
+        Plugin("hand-made", Manifest("handy"));
+        Plugin("taken", Manifest("someone-else"));
+        registry.Scan();
+        (_, error) = await host.InstallAsync(Zip(("plugin.json", Manifest("handy"))), false, default);
+        Assert.Contains("already installed in the folder 'hand-made'", error);
+        (_, error) = await host.InstallAsync(Zip(("plugin.json", Manifest("handy").Replace("1.0.0", "2.0.0"))), true, default);
+        Assert.Null(error);
+        Assert.False(Directory.Exists(Path.Combine(registry.Dir, "hand-made")));
+        Assert.Equal("2.0.0", registry.Get("handy")!.Version);
+        (_, error) = await host.InstallAsync(Zip(("plugin.json", Manifest("taken"))), true, default);
+        Assert.Contains("belongs to another plugin", error);
+        Assert.Equal("someone-else", registry.All.Single(f => f.Folder == "taken").Manifest!.Id);
+        Assert.Contains("\"id\":\"handy\"", Catalog.AllPluginsJson); // the editor's live preview reads this list
+        Assert.Empty(Directory.GetDirectories(registry.Dir, ".staging-*"));
+    }
+
     private static async Task Until(Func<bool> condition)
     {
         for (var i = 0; i < 100 && !condition(); i++) await Task.Delay(100);

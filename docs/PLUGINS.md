@@ -303,8 +303,15 @@ the card's look (Settings › Appearance) shows through.
 - **Secrets stay on the computer**: plugin settings never go to the phone, and options marked `secret` are stripped
   from the phone's config (`StackWidgets.PublicOptions`).
 - **Sandboxed UI**: no `allow-same-origin`, so the frame has an opaque origin: no access to the panel, its storage, the
-  agent (whose proxy requires a header a sandboxed frame cannot send cross-origin) or the Android bridge. The CSP blocks
-  the network unless the plugin has the `network` permission. Messages are accepted only from that frame.
+  agent (whose proxy requires a header a sandboxed frame cannot send cross-origin) or the Android bridge. Messages are
+  accepted only from that frame, and it only ever receives **its own plugin's** data and options (never secret ones).
+- **What the CSP does and does not do**: without the `network` permission the CSP blocks `fetch`, XHR, images, fonts and
+  media from the network, so a UI cannot load remote content or call APIs. It cannot stop the frame from navigating
+  itself (`location = …`, `<meta http-equiv="refresh">`), and a navigation can carry data in its URL. The panel detects
+  that (every page it loads must greet it first) and stops the widget, but by then the request has been made. So the
+  `network` permission controls what a UI may load; it is **not a confidentiality boundary**. That is acceptable because
+  a UI only sees data its own backend already has, and that backend has the network anyway: trust a plugin's UI exactly
+  as much as its backend.
 - **Network exposure**: over Wi-Fi only `/api/plugins/state`, `/api/plugins/{id}/ui/{widget}` and
   `/api/plugins/{id}/action` are reachable (with the paired token). Listing, installing, uninstalling and restarting are
   local only, like the rest of the settings.

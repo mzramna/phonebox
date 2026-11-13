@@ -309,7 +309,14 @@ então o visual do card (Settings › Appearance) aparece por trás.
   são removidas da config enviada ao celular (`StackWidgets.PublicOptions`).
 - **UI em sandbox**: sem `allow-same-origin`, o frame tem origem opaca: não acessa o painel, o armazenamento dele, o
   agente (cujo proxy exige um cabeçalho que um frame em sandbox não consegue enviar entre origens) nem a ponte Android.
-  A CSP bloqueia a rede, a menos que o plugin tenha a permissão `network`. Só são aceitas mensagens daquele frame.
+  Só são aceitas mensagens daquele frame, e ele só recebe os dados e as opções **do próprio plugin** (nunca as secretas).
+- **O que a CSP faz e o que não faz**: sem a permissão `network`, a CSP bloqueia `fetch`, XHR, imagens, fontes e mídia da
+  rede, então uma UI não carrega conteúdo remoto nem chama APIs. Ela não impede o frame de navegar para outra página
+  (`location = …`, `<meta http-equiv="refresh">`), e uma navegação pode levar dados na URL. O painel detecta isso (toda
+  página que ele carrega precisa se apresentar primeiro) e para o widget, mas a requisição já terá sido feita. Portanto a
+  permissão `network` controla o que uma UI pode carregar; ela **não é uma fronteira de confidencialidade**. Isso é
+  aceitável porque a UI só vê dados que o próprio backend do plugin já tem, e esse backend tem acesso à rede de qualquer
+  forma: confie na UI de um plugin exatamente tanto quanto no backend dele.
 - **Exposição na rede**: pelo Wi-Fi só `/api/plugins/state`, `/api/plugins/{id}/ui/{widget}` e
   `/api/plugins/{id}/action` são acessíveis (com o token do pareamento). Listar, instalar, desinstalar e reiniciar são só
   locais, como o resto das configurações.

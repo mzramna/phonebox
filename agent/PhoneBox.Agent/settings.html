@@ -946,18 +946,13 @@ function setStage(mode) {
 }
 
 /**
- * The plugin list the phone gets (AgentConfig.ToPublic: name, version and widgets of the plugins turned on), built from
- * the catalog; cfg.plugins itself only holds ids, on/off and settings, which never go to the panel.
+ * The plugin list the phone gets (AgentConfig.ToPublic): the agent's public description of each plugin found
+ * (/api/catalog "plugins"), for the plugins turned on here. cfg.plugins itself only holds ids, on/off and settings,
+ * which never go to the panel.
  */
 function previewPlugins() {
   const on = new Set((cfg.plugins || []).filter((p) => p.enabled).map((p) => p.id));
-  const byId = {};
-  for (const w of catalog.widgets) {
-    if (!w.plugin || !on.has(w.plugin)) continue;
-    const p = (byId[w.plugin] ??= { id: w.plugin, name: w.pluginName || w.plugin, version: w.pluginVersion || '', network: !!w.network, widgets: [] });
-    p.widgets.push({ id: w.type.split('.')[2], type: w.type, name: w.name, icon: w.icon, ui: !!w.ui, view: w.view || null, actions: w.actions || [] });
-  }
-  return Object.values(byId);
+  return (catalog.plugins || []).filter((p) => on.has(p.id));
 }
 
 function sendPreview() {

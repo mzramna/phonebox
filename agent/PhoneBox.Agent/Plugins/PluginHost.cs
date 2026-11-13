@@ -30,7 +30,12 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, PluginStateItem>> _state = new();
     private readonly ConcurrentDictionary<string, Queue<long>> _notifyTimes = new();
     private readonly ConcurrentDictionary<string, byte> _busy = new(); // being installed or removed: not started meanwhile
+    private readonly ConcurrentDictionary<string, byte> _stopping = new(); // a sidecar still shutting down: no second one yet
     private readonly SemaphoreSlim _install = new(1, 1);
+    private readonly Lock _reconcile = new();
+    private volatile bool _dirty = true;
+    private volatile bool _closing; // the agent is shutting down: no new sidecar may start
+    private (long Config, long Scans) _seen;
     private long _version = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     /// <summary>Changes whenever a plugin publishes data; the panel reloads /api/plugins/state when it does.</summary>
@@ -45,7 +50,7 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
     {
         while (!ct.IsCancellationRequested)
         {
-            try { Reconcile(); }
+            try { Reconcile(); } // cheap when nothing changed
             catch (Exception ex) { log.LogWarning("plugins: {Msg}", ex.Message); }
             try { await Task.Delay(TimeSpan.FromSeconds(1), ct); }
             catch (OperationCanceledException) { break; }
@@ -54,25 +59,71 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
 
     public override async Task StopAsync(CancellationToken ct)
     {
+        lock (_reconcile) _closing = true;
         await base.StopAsync(ct);
         await Task.WhenAll(_runners.Values.Select(r => r.StopAsync()));
         _runners.Clear();
     }
 
-    /// <summary>Starts, stops and reconfigures the sidecars so they match the settings and the plugins folder.</summary>
-    internal void Reconcile()
+    /// <summary>
+    /// Starts, stops and reconfigures the sidecars so they match the settings and the plugins folder. Runs under a lock
+    /// (it is called from the timer and from requests), and does nothing unless the settings, the plugins folder or a
+    /// sidecar changed since the last pass, or <paramref name="force"/> is set.
+    /// </summary>
+    internal void Reconcile(bool force = false)
     {
-        var c = cfg.Get();
-        var wanted = registry.Valid.Where(m => c.PluginEnabled(m.Id)).ToDictionary(m => m.Id);
-        foreach (var (id, runner) in _runners)
-            if (!wanted.TryGetValue(id, out var m) || !ReferenceEquals(m, runner.Manifest) || m.Backend is null)
-                if (_runners.TryRemove(id, out var gone)) _ = gone.StopAsync();
-        foreach (var id in _state.Keys.Where(id => !wanted.ContainsKey(id)))
-            if (_state.TryRemove(id, out _)) Bump();
-        foreach (var m in wanted.Values.Where(m => m.Backend is not null && !_busy.ContainsKey(m.Id)))
+        lock (_reconcile)
         {
-            var runner = _runners.GetOrAdd(m.Id, _ => { log.LogInformation("plugin {Id} {Version}: starting", m.Id, m.Version); return new PluginRunner(m, this); });
-            runner.Configure(ConfigPayload(c, m));
+            if (_closing) return;
+            var seen = (cfg.Version, registry.Scans);
+            if (!force && !_dirty && seen == _seen) return;
+            _dirty = false;
+            _seen = seen;
+            var c = cfg.Get();
+            var wanted = registry.Valid.Where(m => c.PluginEnabled(m.Id)).ToDictionary(m => m.Id);
+            // a rescan reads every manifest again: only a plugin whose plugin.json (or folder) changed is restarted
+            foreach (var (id, runner) in _runners)
+                if (!wanted.TryGetValue(id, out var m) || m.Fingerprint != runner.Manifest.Fingerprint || m.Backend is null)
+                    if (_runners.TryRemove(id, out var gone)) StopInBackground(id, gone);
+            foreach (var id in _state.Keys.Where(id => !wanted.ContainsKey(id)))
+                if (_state.TryRemove(id, out _)) Bump();
+            foreach (var m in wanted.Values.Where(m => m.Backend is not null && !_busy.ContainsKey(m.Id) && !_stopping.ContainsKey(m.Id)))
+            {
+                if (!_runners.TryGetValue(m.Id, out var runner))
+                {
+                    log.LogInformation("plugin {Id} {Version}: starting", m.Id, m.Version);
+                    _runners[m.Id] = runner = new PluginRunner(m, this);
+                    runner.Configure(ConfigPayload(c, m));
+                    runner.Start(); // only once it is the plugin's one runner: no second process can appear
+                }
+                else runner.Configure(ConfigPayload(c, m));
+            }
+        }
+    }
+
+    /// <summary>Stops a sidecar; a new one for the same plugin starts only after this one has exited.</summary>
+    private void StopInBackground(string id, PluginRunner runner)
+    {
+        _stopping[id] = 0;
+        _ = runner.StopAsync().ContinueWith(stopped =>
+        {
+            _stopping.TryRemove(id, out _);
+            _dirty = true;
+            try { Reconcile(force: true); } // start its successor (an updated plugin) right away
+            catch (Exception ex) { log.LogWarning("plugins: {Msg}", ex.Message); }
+        }, TaskScheduler.Default);
+    }
+
+    /// <summary>Messages from a sidecar that is being replaced or stopped are dropped.</summary>
+    internal bool IsCurrent(PluginRunner runner) => _runners.TryGetValue(runner.Manifest.Id, out var current) && ReferenceEquals(current, runner);
+
+    /// <summary>Takes the plugin's runner out under the reconcile lock, so no new one starts until <paramref name="hold"/> is cleared.</summary>
+    private PluginRunner? Detach(string id, ConcurrentDictionary<string, byte> hold)
+    {
+        lock (_reconcile)
+        {
+            hold[id] = 0;
+            return _runners.TryRemove(id, out var r) ? r : null;
         }
     }
 
@@ -180,18 +231,31 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
         await _install.WaitAsync(ct);
         try
         {
-            var (staging, m, error) = await PluginInstaller.UnpackAsync(zip, registry.Dir, ct);
+            string? staging;
+            PluginManifest? m;
+            string? error;
+            try { (staging, m, error) = await PluginInstaller.UnpackAsync(zip, registry.Dir, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { return (null, "could not add the plugin: " + ex.Message); }
             if (m is null) return (null, error);
             var target = Path.Combine(registry.Dir, m.Id);
-            if (Directory.Exists(target) && !replace)
+            // the plugin may already be there under another folder name (copied in by hand)
+            var installed = registry.All.FirstOrDefault(f => f.Manifest?.Id == m.Id);
+            var occupant = registry.All.FirstOrDefault(f => string.Equals(f.Folder, m.Id, StringComparison.OrdinalIgnoreCase));
+            if (occupant is not null && occupant.Manifest?.Id != m.Id)
             {
                 PluginInstaller.TryDeleteDir(staging!);
-                return (null, $"the plugin '{m.Id}' is already installed (choose Update to replace it)");
+                return (null, $"the folder '{occupant.Folder}' in the plugins folder belongs to another plugin; rename or remove it first");
             }
-            _busy[m.Id] = 0;
+            if ((installed is not null || Directory.Exists(target)) && !replace)
+            {
+                PluginInstaller.TryDeleteDir(staging!);
+                return (null, $"the plugin '{m.Id}' is already installed in the folder '{installed?.Folder ?? m.Id}' (choose Update to replace it)");
+            }
+            var old = Detach(m.Id, _busy);
             try
             {
-                if (_runners.TryRemove(m.Id, out var old)) await old.StopAsync();
+                if (old is not null) await old.StopAsync();
+                if (installed is not null) Directory.Delete(Path.Combine(registry.Dir, installed.Folder), true);
                 if (Directory.Exists(target)) Directory.Delete(target, true);
                 Directory.Move(staging!, target);
             }
@@ -206,7 +270,7 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
                 _busy.TryRemove(m.Id, out _);
             }
             log.LogInformation("plugin {Id} {Version} installed", m.Id, m.Version);
-            Reconcile();
+            Reconcile(force: true);
             return (m.Id, null);
         }
         finally { _install.Release(); }
@@ -221,18 +285,19 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
         if (!dir.StartsWith(Path.GetFullPath(registry.Dir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal)) return "no such plugin";
         var pluginId = found.Manifest?.Id ?? id;
         await _install.WaitAsync();
-        _busy[pluginId] = 0;
+        var r = Detach(pluginId, _busy);
         try
         {
-            if (_runners.TryRemove(pluginId, out var r)) await r.StopAsync();
+            if (r is not null) await r.StopAsync();
             try { Directory.Delete(dir, true); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "could not delete the plugin's folder: " + ex.Message; }
             if (!keepData && found.Manifest is not null) PluginInstaller.TryDeleteDir(DataDir(pluginId));
-            var c = cfg.Get();
-            if (c.Plugin(pluginId) is { } entry)
+            // edit a copy: the config object from cfg.Get() is shared with every other request
+            var copy = JsonSerializer.SerializeToNode(cfg.Get(), ConfigStore.WriteOpts)!.AsObject();
+            if (copy["plugins"] is JsonArray list && list.Any(p => p?["id"]?.GetValue<string>() == pluginId))
             {
-                c.Plugins.Remove(entry);
-                cfg.Save(JsonSerializer.Serialize(c, ConfigStore.WriteOpts));
+                copy["plugins"] = new JsonArray(list.Where(p => p?["id"]?.GetValue<string>() != pluginId).Select(p => p?.DeepClone()).ToArray());
+                if (cfg.Save(copy.ToJsonString()) is { } saveError) log.LogWarning("plugin {Id}: could not forget its settings: {Error}", pluginId, saveError);
             }
             log.LogInformation("plugin {Id} uninstalled", pluginId);
             return null;
@@ -242,14 +307,17 @@ public sealed class PluginHost(PluginRegistry registry, ConfigStore cfg, PushSto
             registry.Scan();
             _busy.TryRemove(pluginId, out _);
             _install.Release();
-            Reconcile();
+            Reconcile(force: true);
         }
     }
 
-    public void Restart(string id)
+    /// <summary>Stops the plugin's sidecar, waits until it has exited, then starts a new one.</summary>
+    public async Task RestartAsync(string id)
     {
-        if (_runners.TryRemove(id, out var r)) _ = r.StopAsync();
-        Reconcile();
+        var r = Detach(id, _stopping);
+        try { if (r is not null) await r.StopAsync(); }
+        finally { _stopping.TryRemove(id, out _); }
+        Reconcile(force: true);
     }
 
     /// <summary>Every plugin found in the plugins folder, with its state, for the settings page.</summary>
@@ -291,7 +359,7 @@ internal sealed class PluginRunner
     private readonly PluginHost _host;
     private readonly CancellationTokenSource _cts = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<PluginActionResult>> _pending = new();
-    private readonly Task _loop;
+    private Task? _loop;
     private Process? _proc;
     private PluginConnection? _conn;
     private JsonObject _config = [];
@@ -308,8 +376,10 @@ internal sealed class PluginRunner
     {
         Manifest = manifest;
         _host = host;
-        _loop = Task.Run(() => RunLoop(_cts.Token));
     }
+
+    /// <summary>Starts the sidecar (and keeps restarting it) until <see cref="StopAsync"/>.</summary>
+    public void Start() => _loop ??= Task.Run(() => RunLoop(_cts.Token));
 
     /// <summary>Keeps the latest settings and widget list; sent as "config" when they change while running.</summary>
     public void Configure(JsonObject config)
@@ -437,6 +507,8 @@ internal sealed class PluginRunner
 
     private void Handle(PluginMessage msg)
     {
+        // a sidecar being replaced or stopped may still print a line or two: it must not overwrite the new one's data
+        if (msg.Type is "state" or "notify" && !_host.IsCurrent(this)) return;
         string? error = msg.Error;
         var b = msg.Body;
         string? Str(string k) => b.ValueKind == JsonValueKind.Object && b.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
@@ -512,7 +584,7 @@ internal sealed class PluginRunner
             catch { }
         }
         _cts.Cancel();
-        try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+        if (_loop is { } loop) try { await loop.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
         Fail("the plugin stopped");
     }
 }

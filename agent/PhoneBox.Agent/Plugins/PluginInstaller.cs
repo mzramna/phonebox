@@ -50,6 +50,9 @@ public static class PluginInstaller
                     if (tops.Count == 1 && names.Contains($"{tops[0]}/{PluginManifest.FileName}")) prefix = tops[0] + "/";
                 }
                 if (prefix is null) return Fail($"no {PluginManifest.FileName} at the top of the .zip file (or in its only folder)");
+                // the same name twice (or twice up to letter case, which is one file on Windows and macOS) is refused
+                var twice = names.GroupBy(x => x, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
+                if (twice is not null) return Fail($"the .zip file contains the same file twice: {PluginConnection.Shorten(twice.Key, 80)}");
                 var root = Path.GetFullPath(staging) + Path.DirectorySeparatorChar;
                 foreach (var e in entries)
                 {
@@ -57,13 +60,25 @@ public static class PluginInstaller
                     if (!name.StartsWith(prefix, StringComparison.Ordinal)) continue;
                     var dest = Path.GetFullPath(Path.Combine(staging, name[prefix.Length..]));
                     if (!dest.StartsWith(root, StringComparison.Ordinal)) return Fail($"unsafe path in the .zip file: {PluginConnection.Shorten(name, 80)}");
-                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                    e.ExtractToFile(dest, overwrite: false);
+                    try
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                        e.ExtractToFile(dest, overwrite: false);
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or NotSupportedException)
+                    {
+                        return Fail($"could not unpack {PluginConnection.Shorten(name, 80)}: {ex.Message}");
+                    }
                 }
             }
             var (m, error) = PluginManifest.Load(staging);
             if (m is null) return Fail(error);
             return (staging, m, null);
+        }
+        catch
+        {
+            TryDeleteDir(staging); // cancelled or failed half-way: nothing is left behind
+            throw;
         }
         finally { TryDelete(tmp); }
 

@@ -1343,7 +1343,7 @@ export async function loadPlugins() {
     D.plugins = r.plugins || {};
     pluginsVersion = r.version;
     // the last data, so plugin widgets show something right after a restart or while the computer is away
-    if (!PREVIEW) { const json = JSON.stringify({ plugins: D.plugins }); if (json.length < 1_000_000) store.set('pluginState', { plugins: D.plugins }); }
+    if (!PREVIEW) { const json = JSON.stringify({ plugins: D.plugins }); if (json.length < 1_000_000) try { localStorage.setItem('pluginState', json); } catch (_) {} }
     emit('plugins');
   } catch (_) {}
 }

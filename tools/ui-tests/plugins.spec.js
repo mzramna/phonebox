@@ -134,3 +134,12 @@ test('the phone keeps a plugin UI and its last data, and forgets them when the p
   await expect(page.locator('.w-plugin .empty')).toHaveCount(3, { timeout: 15000 });
   await expect.poll(stored).toEqual([]);
 });
+
+test('a plugin UI that navigates away from its page is stopped', async ({ page }) => {
+  await show(page);
+  await expect(page.frameLocator('.plugin-frame').locator('li')).toHaveCount(2);
+  const child = page.frames().find((f) => f.url() === 'about:srcdoc');
+  await child.evaluate(() => { location.href = 'about:blank'; });
+  await expect(page.locator('.w-plugin .empty').first()).toContainText('tried to leave the panel');
+  await expect(page.locator('.plugin-frame')).toHaveCount(0);
+});

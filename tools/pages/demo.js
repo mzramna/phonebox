@@ -115,10 +115,13 @@
       shortcuts: (c.shortcuts || []).map(({ id, label, icon, color, toggle, cmd }) => ({ id, label, icon, color, toggle: !!toggle || cmd === 'builtin:mute' })),
       rules: (c.rules || []).map(({ id, name, enabled, when }) => ({ id, name, enabled: enabled !== false, when })),
       charge: { enabled: !!c.charge?.enabled, min: c.charge?.min ?? 50, max: c.charge?.max ?? 80 },
-      plugins: plugin && (c.plugins || []).some((p) => p.id === plugin.id && p.enabled) ? [{ id: plugin.id, name: plugin.name, version: plugin.version, network: (plugin.permissions || []).includes('network'),
-        widgets: plugin.widgets.map((w) => ({ id: w.id, type: pluginType(plugin, w), name: w.name, icon: w.icon, ui: !!w.ui, view: w.view || null, actions: w.actions || [] })) }] : [],
+      plugins: plugin && (c.plugins || []).some((p) => p.id === plugin.id && p.enabled) ? [publicPlugin(plugin)] : [],
     };
   }
+
+  // as Catalog.PluginPublic: what the panel needs to draw a plugin's widgets (no settings)
+  const publicPlugin = (m) => ({ id: m.id, name: m.name, version: m.version, network: (m.permissions || []).includes('network'),
+    widgets: m.widgets.map((w) => ({ id: w.id, type: pluginType(m, w), name: w.name, icon: w.icon, ui: !!w.ui, view: w.view || null, actions: w.actions || [] })) });
 
   // made-up results of the example plugin's checks, published as the plugin's state (/api/plugins/state)
   function pluginState(c, m) {
@@ -620,7 +623,7 @@
       const c = await loadCatalog(), m = await loadPlugin();
       return json(!m ? c : { ...c, widgets: [...c.widgets, ...m.widgets.map((w) => ({ type: pluginType(m, w), category: 'Plugins', name: w.name, icon: w.icon || '🧩',
         desc: `${w.desc || ''} (plugin: ${m.name} ${m.version})`, w: w.w, h: w.h, minW: w.minW || 1, minH: w.minH || 1, plugin: m.id, options: w.options || [],
-        pluginName: m.name, pluginVersion: m.version, network: (m.permissions || []).includes('network'), ui: !!w.ui, view: w.view || null, actions: w.actions || [] }))] });
+      }))], plugins: [publicPlugin(m)] });
     }
     if (path === '/api/settings') {
       if (method === 'PUT') {
