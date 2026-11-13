@@ -34,7 +34,7 @@ the pages in a visual editor on the PC: **113 widgets**, **30 templates**, as ma
 <sub>A tour through the pages (made-up data): a notification, a permission prompt, a rule switching pages calmly. <a href="docs/tour-0.6.mp4">Video (MP4)</a></sub></p>
 
 **Contents**: [Quick start](#quick-start) · [Pages & templates](#pages--templates) · [Widgets](#widgets) ·
-[Layout editor](#layout-editor--settings) · [Claude Code prompts](#claude-code-permission-prompts) · [Webhooks](#webhooks) · [Rules](#rules) · [Wi-Fi & Tailscale](#wi-fi--tailscale) ·
+[Layout editor](#layout-editor--settings) · [Claude Code prompts](#claude-code-permission-prompts) · [Webhooks](#webhooks) · [Plugins](#plugins) · [Rules](#rules) · [Wi-Fi & Tailscale](#wi-fi--tailscale) ·
 [Updates](#updates) · [How it works](#how-it-works) · [Security](#security--privacy) · [FAQ](#faq--troubleshooting) ·
 [Development](#development)
 
@@ -308,6 +308,17 @@ From this PC no key is needed. With Wi-Fi on, other machines on the network or T
 on `https://<pc>:8766` with the **webhook key** from the settings (`Authorization: Bearer <key>`, or `?token=<key>`
 for senders that cannot set headers). That key opens only the webhook endpoints, never the phone API.
 
+## Plugins
+
+Community plugins add widgets and integrations without changing PhoneBox: a plugin is a folder with a `plugin.json`,
+an optional backend (any program that speaks JSON lines on stdin/stdout: Python, Node, Go, a shell script…) and its
+widgets, drawn either with a built-in look or with the plugin's own HTML in a sandboxed iframe. Add a plugin from its
+`.zip` in **Settings › Plugins**, click it to configure it, turn it on or uninstall it. Plugins stay off until you turn
+them on, and a plugin's backend runs with your user's rights, so only turn on plugins you trust.
+
+[docs/PLUGINS.md](docs/PLUGINS.md) explains how widgets work and how to write a plugin
+([em português](docs/PLUGINS.pt-BR.md)); [`extras/plugins/http-status`](extras/plugins/http-status) is a complete example.
+
 ## Rules
 
 **Settings › Rules** lets the panel react to what happens on the computer. Each rule is *when → then*:
@@ -514,7 +525,7 @@ The script dispatches the gated GitHub release workflow; see [the release checkl
 ## Extras
 
 [`extras/umidigi-bison`](extras/umidigi-bison) has the reversible, no-root tune-up (debloat list, settings) used on
-the phone PhoneBox was built for.
+the phone PhoneBox was built for. [`extras/plugins`](extras/plugins) has example [plugins](#plugins).
 
 ## License
 

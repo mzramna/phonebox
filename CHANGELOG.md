@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+**Community plugins** ([docs/PLUGINS.md](docs/PLUGINS.md), [ersinkoc/phonebox#40](https://github.com/ersinkoc/phonebox/issues/40))
+- Plugins add widgets and integrations without changing PhoneBox: a folder with a `plugin.json`, an optional backend
+  (any program speaking JSON lines on stdin/stdout) and widgets drawn with a built-in look (`view`) or with the
+  plugin's own HTML in a sandboxed iframe with a strict Content-Security-Policy (`ui`).
+- Settings › Plugins lists the plugins found, adds one from a `.zip`, and opens a plugin's menu on click: Configure
+  (its settings, secrets kept on the computer), turn on / off (after showing the command that will run), restart,
+  update and uninstall. Plugin widgets appear in a new *Plugins* category of the widget list.
+- The agent starts only the plugins that are turned on, restarts a backend that exits with a growing delay, and passes
+  a widget's action to it only if that widget exists on that page and declares the action.
+- Pages keep plugin widgets while the plugin is missing or off; the panel shows a placeholder instead.
+- Example plugin: [`extras/plugins/http-status`](extras/plugins/http-status) (Python, standard library only).
+
 ## 0.9.4 — 2026-11-11
 
 A full audit of the agent, the panel, the settings page and the tooling. Every fix below has a regression test or a
