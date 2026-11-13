@@ -102,6 +102,21 @@ flowchart LR
 The widget type of a plugin widget is `plugin.<plugin id>.<widget id>`. Pages keep such widgets even while the plugin is
 missing or turned off (the panel shows a placeholder), so removing a plugin never destroys a layout.
 
+### Nothing about a plugin is built into the app
+
+The phone app only contains the generic host (`widgets/plugins.js`). Everything a plugin widget needs comes over the
+connection: the plugin's metadata with the config (`/api/config`), each widget's HTML (`/api/plugins/{id}/ui/{widget}`)
+and its data (`/api/plugins/state`). The panel keeps a local copy in the WebView's storage so plugin widgets draw at once
+after a restart and keep showing their last data while the computer is away:
+
+| What | Stored as | Replaced / removed |
+|---|---|---|
+| Metadata (name, version, widgets, actions) | with the config (`cfg`) | with every new config |
+| Widget HTML | `pb-plugin-ui:<plugin>@<version>/<widget>` | when the computer sends a different copy; older versions and plugins no longer turned on are removed |
+| Last data | `pluginState` | on every change |
+
+Installing, updating or removing a plugin therefore never needs a new app.
+
 ## Installing and managing plugins
 
 Everything happens in **Settings › Plugins** on the computer:

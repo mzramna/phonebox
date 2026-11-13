@@ -112,3 +112,25 @@ test('the layout editor live preview draws plugin widgets like the phone does', 
   await expect(panel.locator('.w-plugin.w-push')).toContainText('Endpoints up');
   await expect(panel.locator('.w-plugin .empty')).toHaveCount(0);
 });
+
+test('the phone keeps a plugin UI and its last data, and forgets them when the plugin goes away', async ({ page }) => {
+  await show(page);
+  await expect(page.frameLocator('.plugin-frame').locator('li')).toHaveCount(2);
+  const stored = () => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('pb-plugin-ui:')));
+  await expect.poll(stored).toEqual(['pb-plugin-ui:http-status@0.1.0/endpoints']);
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('pluginState')).plugins['http-status']))).toContain('home.eps');
+
+  // the computer can no longer hand out the UI: the stored copy is drawn
+  let blocked = 0;
+  await page.route('**/plugins/http-status/ui/endpoints.html', (r) => { blocked++; return r.abort(); });
+  await page.reload();
+  await expect(page.frameLocator('.plugin-frame').locator('li')).toHaveCount(2);
+  await expect(page.frameLocator('.plugin-frame').locator('#title')).toHaveText('My sites');
+  expect(blocked).toBeGreaterThan(0);
+
+  // turned off on the computer: the stored UI is removed with the next config
+  await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('pb-demo-config')); c.plugins[0].enabled = false;
+    localStorage.setItem('pb-demo-config', JSON.stringify(c)); localStorage.setItem('pb-demo-version', JSON.stringify(Date.now())); });
+  await expect(page.locator('.w-plugin .empty')).toHaveCount(3, { timeout: 15000 });
+  await expect.poll(stored).toEqual([]);
+});

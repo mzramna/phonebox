@@ -11,7 +11,7 @@ import './widgets/pc.js';
 import './widgets/sky.js';
 import './widgets/web.js';
 import './widgets/controls.js';
-import './widgets/plugins.js';
+import { prunePluginCache } from './widgets/plugins.js';
 
 // PhoneBox desk panel. Pages are 12 × 6 grids of widgets, designed in the agent's settings page.
 // The panel talks to the PhoneBox agent through "/agent/*", which the Android shell proxies over USB
@@ -73,7 +73,7 @@ export let pushVersion = null;
 export let pluginsVersion = null; // data published by community plugins (D.plugins)
 
 /** Latest data from the agent and the web; widgets read from here. */
-export const D = { state: null, quotas: null, work: null, procs: null, push: {}, plugins: {}, weather: null, calendar: null, notes: store.get('notes', []) };
+export const D = { state: null, quotas: null, work: null, procs: null, push: {}, plugins: PREVIEW ? {} : store.get('pluginState', {}).plugins || {}, weather: null, calendar: null, notes: store.get('notes', []) };
 
 export const HIST = 90;
 export const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [] };
@@ -753,7 +753,7 @@ export function buildLayout() {
   const enabled = (cfg.pages || []).filter((p) => p.enabled !== false && Array.isArray(p.widgets));
   const next = enabled.length ? enabled : FALLBACK_PAGES;
   const portrait = isPortrait();
-  const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds, cfg.display?.appearance, portrait]);
+  const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds, cfg.display?.appearance, portrait, cfg.plugins]); // plugins: turned on / off or updated
   if (key === layoutKey) return;
   layoutKey = key;
   const prevId = pages[curPage]?.id;
@@ -1290,6 +1290,7 @@ export async function loadConfig() {
     cfgVersion = r.version;
     if (JSON.stringify(cfg) !== before) {
       store.set('cfg', cfg);
+      prunePluginCache(cfg.plugins);
       buildLayout();
       applyDisplay();
       loadWeather();
@@ -1341,6 +1342,8 @@ export async function loadPlugins() {
     const r = await api('/plugins/state');
     D.plugins = r.plugins || {};
     pluginsVersion = r.version;
+    // the last data, so plugin widgets show something right after a restart or while the computer is away
+    if (!PREVIEW) { const json = JSON.stringify({ plugins: D.plugins }); if (json.length < 1_000_000) store.set('pluginState', { plugins: D.plugins }); }
     emit('plugins');
   } catch (_) {}
 }

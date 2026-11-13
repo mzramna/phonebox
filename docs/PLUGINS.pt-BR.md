@@ -103,6 +103,22 @@ flowchart LR
 O tipo de um widget de plugin é `plugin.<id do plugin>.<id do widget>`. As páginas mantêm esses widgets mesmo com o
 plugin ausente ou desligado (o painel mostra um aviso no lugar), então remover um plugin nunca destrói um layout.
 
+### Nada de um plugin é compilado no app
+
+O app do celular só contém o host genérico (`widgets/plugins.js`). Tudo o que um widget de plugin precisa chega pela
+conexão: os metadados do plugin junto com a config (`/api/config`), o HTML de cada widget
+(`/api/plugins/{id}/ui/{widget}`) e os dados (`/api/plugins/state`). O painel guarda uma cópia local no armazenamento do
+WebView, para que os widgets de plugin apareçam na hora depois de reiniciar e continuem mostrando os últimos dados
+enquanto o computador está fora:
+
+| O quê | Guardado como | Substituído / removido |
+|---|---|---|
+| Metadados (nome, versão, widgets, ações) | junto com a config (`cfg`) | a cada nova config |
+| HTML do widget | `pb-plugin-ui:<plugin>@<versão>/<widget>` | quando o computador envia uma cópia diferente; versões antigas e plugins que não estão mais ligados são removidos |
+| Últimos dados | `pluginState` | a cada mudança |
+
+Por isso instalar, atualizar ou remover um plugin nunca exige um app novo.
+
 ## Instalando e gerenciando plugins
 
 Tudo acontece em **Settings › Plugins** no computador:

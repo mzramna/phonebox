@@ -9,7 +9,30 @@ import { W } from '../registry.js';
 //    Content-Security-Policy. It sees only its own plugin's data and can only ask for the actions its widget declares;
 //    the panel checks them and the agent checks them again.
 
-const uiCache = new Map(); // "<plugin>@<version>/<widget>" -> Promise<html>
+// The app ships no plugin: everything a plugin widget needs arrives over the connection and is kept on the phone, so
+// plugin widgets draw at once on start and keep working while the computer is away. Kept in localStorage:
+//  - the plugins' metadata, with the rest of the config ("cfg", main.js);
+//  - each widget UI's HTML, under "pb-plugin-ui:<plugin>@<version>/<widget>" (a new version replaces it);
+//  - the plugins' last data ("pluginState", main.js).
+const UI_KEY = 'pb-plugin-ui:';
+const uiFetches = new Map(); // "<plugin>@<version>/<widget>" -> Promise<html> (one request per start and widget)
+
+const uiStored = (key) => { try { return localStorage.getItem(UI_KEY + key); } catch (_) { return null; } };
+function storeUi(key, html) {
+  try {
+    const sameWidget = (k) => k.startsWith(UI_KEY + key.split('@')[0] + '@') && k.endsWith('/' + key.split('/').pop());
+    for (const k of Object.keys(localStorage)) if (k !== UI_KEY + key && sameWidget(k)) localStorage.removeItem(k); // older versions
+    localStorage.setItem(UI_KEY + key, html);
+  } catch (_) {} // storage full or blocked: the widget still works, it is just fetched again next time
+}
+
+/** Forgets the stored UIs of plugins that are no longer installed or turned on (called when a new config arrives). */
+export function prunePluginCache(plugins) {
+  try {
+    const keep = new Set((plugins || []).flatMap((p) => (p.widgets || []).map((w) => `${UI_KEY}${p.id}@${p.version}/${w.id}`)));
+    for (const k of Object.keys(localStorage)) if (k.startsWith(UI_KEY) && !keep.has(k)) localStorage.removeItem(k);
+  } catch (_) {}
+}
 
 /** Sends a declared action to the plugin's backend; resolves with the plugin's "data", rejects with its error. */
 export async function pluginAction(plugin, page, widget, name, args) {
@@ -55,7 +78,8 @@ function frameWidget(box, ctx, meta, wm, key) {
   frame.title = wm.name;
   box.append(frame);
   const cacheKey = `${meta.id}@${meta.version}/${wm.id}`;
-  if (!uiCache.has(cacheKey)) uiCache.set(cacheKey, api(`/plugins/${encodeURIComponent(meta.id)}/ui/${encodeURIComponent(wm.id)}`, 'GET', 8000).catch((e) => { uiCache.delete(cacheKey); throw e; }));
+  if (!uiFetches.has(cacheKey)) uiFetches.set(cacheKey, api(`/plugins/${encodeURIComponent(meta.id)}/ui/${encodeURIComponent(wm.id)}`, 'GET', 8000)
+    .then((html) => { storeUi(cacheKey, html); return html; }, (e) => { uiFetches.delete(cacheKey); throw e; }));
   let loaded = false, sentState, sentItem;
   const post = (m) => { try { frame.contentWindow?.postMessage(m, '*'); } catch (_) {} };
   const send = (force) => {
@@ -67,9 +91,17 @@ function frameWidget(box, ctx, meta, wm, key) {
     sentState = state;
     sentItem = item;
   };
-  uiCache.get(cacheKey).then((html) => {
+  let shown = null;
+  const show = (html) => {
+    if (html === shown) return;
+    shown = html;
+    loaded = false;
     frame.srcdoc = pluginPrelude({ plugin: meta.id, widget: wm.id, instance: { page: ctx.page.id, id: ctx.w.id, key }, options: ctx.o, network: meta.network }) + html;
-  }, () => box.replaceChildren(h('div', 'empty', `${wm.name}: could not load the widget from the computer`)));
+  };
+  // the stored copy draws at once (also offline); the computer's copy replaces it only if it changed
+  const stored = uiStored(cacheKey);
+  if (stored != null) show(stored);
+  uiFetches.get(cacheKey).then(show, () => { if (stored == null) box.replaceChildren(h('div', 'empty', `${wm.name}: could not load the widget from the computer`)); });
   frame.addEventListener('load', () => { loaded = true; send(true); });
   const onMsg = async (e) => {
     const m = e.data;
