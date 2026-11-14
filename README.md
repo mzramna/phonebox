@@ -471,6 +471,7 @@ Node.js 22 for the browser tooling. The Gradle wrapper downloads Gradle automati
 python tools/demo-server.py                  # the web demo from source: http://127.0.0.1:8790/panel/ and /settings/
 python tools/check-release.py                # release versions and widget/template catalog consistency
 dotnet test agent/PhoneBox.Agent.Tests       # agent unit tests
+packaging/appimage/build-appimage.sh linux-x64 # self-contained Linux AppImage in dist/ (needs squashfs-tools)
 cd tools/ui-tests
 npm ci
 npx playwright install chromium             # first run; on Linux CI use --with-deps chromium

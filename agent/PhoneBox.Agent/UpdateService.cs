@@ -328,9 +328,26 @@ public static class AppRestart
 {
     public static volatile bool Requested;
 
+    /// <summary>
+    /// What to start again: the running program, or inside an AppImage the .AppImage file itself (its mount point, where
+    /// the program runs from, goes away when this process exits). Only when this process really runs from that AppImage:
+    /// on Linux, with APPDIR set and the program inside APPDIR. An APPIMAGE variable merely inherited from another AppImage
+    /// application (the agent started from its terminal, for example) is ignored.
+    /// </summary>
+    internal static string Executable(string processPath, string? appImage = null, string? appDir = null, bool? linux = null)
+    {
+        appImage ??= Environment.GetEnvironmentVariable("APPIMAGE");
+        appDir ??= Environment.GetEnvironmentVariable("APPDIR");
+        if (!(linux ?? OperatingSystem.IsLinux()) || string.IsNullOrEmpty(appImage) || string.IsNullOrEmpty(appDir) || !File.Exists(appImage))
+            return processPath;
+        var dir = Path.GetFullPath(appDir).TrimEnd('/') + "/";
+        return Path.GetFullPath(processPath).StartsWith(dir, StringComparison.Ordinal) ? appImage : processPath;
+    }
+
     internal static ProcessStartInfo StartInfo(string executable, string[] args)
     {
-        var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
+        var appImage = executable == Environment.GetEnvironmentVariable("APPIMAGE");
+        var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = appImage ? AppPaths.NeutralCwd : AppContext.BaseDirectory };
         if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
             start.ArgumentList.Add(typeof(AppRestart).Assembly.Location);
         foreach (var arg in args.Where(a => a != "--restart")) start.ArgumentList.Add(arg);
