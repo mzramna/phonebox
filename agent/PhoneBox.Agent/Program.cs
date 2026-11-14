@@ -101,7 +101,7 @@ app.MapPost("/api/controls/obs/{action}", async (string action, string? id, int?
 
 // The panel in a desktop browser (the layout editor's live preview, /panel/) calls the API as /agent/api/..., the same
 // path the phone uses; on the local port that is simply /api/... Routing runs after this, so it sees the new path.
-// The web kiosk (Kiosk.cs) runs the same panel, so on the Wi-Fi port too; there it needs the kiosk key (checked below).
+// The web kiosk (Kiosk.cs) runs the same panel on the Wi-Fi port; there /agent/api needs the kiosk cookie (AccessGate.cs).
 const string PanelApiItem = "phonebox.panel-api";
 app.Use((ctx, next) =>
 {
@@ -114,68 +114,37 @@ app.Use((ctx, next) =>
     return next(ctx);
 });
 
-// Security:
-//  - Local port 8765 listens on 127.0.0.1 only; the Host check blocks DNS rebinding. The phone's USB proxy sends
-//    no Origin header; from browsers only the settings page itself (same origin) is accepted (no CSRF).
-//  - The optional Wi-Fi port only serves the phone API, only over TLS, and only with the paired token.
+// Security: who may call what is decided in AccessGate.cs (local port, phone and webhooks over Wi-Fi, web kiosk).
 app.UseRouting();
 app.Use(async (ctx, next) =>
 {
-    var origin = ctx.Request.Headers.Origin.ToString();
-    // Web kiosk (Kiosk.cs): its own key, on either port. /kiosk/… takes it in ?token= (or the cookie set from it); the
-    // panel's API calls (/agent/api/…) carry the cookie. Invisible (404) while turned off.
-    var kiosk = configStore.Get().Kiosk;
-    var lanPort = lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port;
-    var kioskCookie = ctx.Request.Cookies[Kiosk.CookieName];
-    var panelApi = ctx.Items.ContainsKey(PanelApiItem);
-    var kioskPage = Kiosk.IsKioskPath(ctx.Request.Path);
-    // on the local port the layout editor's preview also uses /agent/api without a key: only a valid cookie makes it a kiosk call
-    var kioskApi = panelApi && (lanPort || Kiosk.Authorized(null, null, kiosk, kioskCookie));
-    if (kioskPage || kioskApi)
+    var cfgNow = configStore.Get();
+    var spotifyCallback = ctx.Request.Method == "GET" && ctx.Request.Path == "/api/controls/spotify/callback"
+        && app.Services.GetRequiredService<SpotifyControl>().HasPendingState(ctx.Request.Query["state"]);
+    var gate = AccessGate.Check(ctx.Request, cfgNow, lanCert is null ? null : lanCfg.Port, ctx.Items.ContainsKey(PanelApiItem),
+        spotifyCallback, SameOrigins, DateTimeOffset.UtcNow);
+    if (gate.Kiosk)
     {
-        var status = !kiosk.Enabled ? StatusCodes.Status404NotFound
-            : !Kiosk.Authorized(kioskPage ? ctx.Request.Headers.Authorization.ToString() : null, kioskPage ? ctx.Request.Query["token"].ToString() : null, kiosk, kioskCookie)
-              || !Kiosk.OriginAllowed(origin, ctx.Request.Scheme, ctx.Request.Host.Value ?? "")
-              || BrowserGuard.IsForeign(ctx.Request.Headers["Sec-Fetch-Site"], ctx.Request.Headers["Sec-Fetch-Mode"], ctx.Request.Method, ctx.Request.Path)
-              || (kioskApi && !Kiosk.PanelApiAllowed(ctx.Request.Path, ctx.Request.Method, ctx.Request.Headers.ContainsKey("X-PhoneBox-Panel")))
-                ? StatusCodes.Status403Forbidden : 0;
-        if (status != 0) { ctx.Response.StatusCode = status; return; }
-        if (kioskPage && Lan.MatchesQuery(ctx.Request.Query["token"], kiosk.Token!) && !Lan.MatchesQuery(kioskCookie, kiosk.Token!))
-            Kiosk.SetCookie(ctx.Response, kiosk.Token!, ctx.Request.IsHttps);
-        // an open kiosk counts as a panel that can answer Claude Code prompts, like the phone
-        if (kioskApi && (ctx.Request.Path.StartsWithSegments("/api/state") || ctx.Request.Path.StartsWithSegments("/api/stream")))
-            Interlocked.Exchange(ref ApprovalStore.PhoneLastSeen, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         ctx.Response.Headers.CacheControl = "no-store";
         ctx.Response.Headers["X-Frame-Options"] = "DENY";
-        ctx.Response.Headers["Referrer-Policy"] = "no-referrer"; // the key is in the URL
-        await next();
+        ctx.Response.Headers["Referrer-Policy"] = "no-referrer"; // the key may be in the address
+    }
+    if (gate.Cookie is { } cookie) Kiosk.SetCookie(ctx.Response, cookie.Value, cookie.Expires);
+    if (gate.Status != 0)
+    {
+        ctx.Response.StatusCode = gate.Status;
+        if (gate.Location is { } location) ctx.Response.Headers.Location = location;
+        if (gate.Body is { } body) { ctx.Response.ContentType = "text/html; charset=utf-8"; await ctx.Response.WriteAsync(body); }
         return;
     }
-    if (lanCert is not null && ctx.Connection.LocalPort == lanCfg.Port)
+    if (gate.Kiosk)
     {
-        // The phone's key opens the panel API; the separate webhook key opens only the webhook endpoints, in a header
-        // or, for senders that cannot set headers, in ?token= (URLs end up in logs, so it must not be the phone's key).
-        var lan = configStore.Get().Lan;
-        var authorized = Lan.Matches(ctx.Request.Headers.Authorization, lan.Token!)
-            || (Lan.IsWebhook(ctx.Request.Path) && (Lan.Matches(ctx.Request.Headers.Authorization, lan.WebhookToken!)
-                || Lan.MatchesQuery(ctx.Request.Query["token"], lan.WebhookToken!)));
-        if (origin != "" || !Lan.AllowedOverLan(ctx.Request.Path) || !authorized)
-        {
-            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
-            return;
-        }
-    }
-    else
-    {
-        var host = ctx.Request.Host.Host;
-        var spotifyCallback = ctx.Request.Method == "GET" && ctx.Request.Path == "/api/controls/spotify/callback"
-            && app.Services.GetRequiredService<SpotifyControl>().HasPendingState(ctx.Request.Query["state"]);
-        if ((host != "127.0.0.1" && host != "localhost") || (origin != "" && !SameOrigins.Contains(origin))
-            || (!spotifyCallback && BrowserGuard.IsForeign(ctx.Request.Headers["Sec-Fetch-Site"], ctx.Request.Headers["Sec-Fetch-Mode"], ctx.Request.Method, ctx.Request.Path)))
-        {
-            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
-            return;
-        }
+        // an open kiosk answers Claude Code prompts only when the settings allow it
+        if (cfgNow.Kiosk.AllowApprovals && (ctx.Request.Path.StartsWithSegments("/api/state") || ctx.Request.Path.StartsWithSegments("/api/stream")))
+            Interlocked.Exchange(ref ApprovalStore.PhoneLastSeen, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        using var watch = Kiosk.Watch(ctx, Kiosk.Capture(ctx.Request), () => configStore.Get().Kiosk);
+        await next();
+        return;
     }
     if (ctx.Request.Path.StartsWithSegments("/api/state") && ctx.Request.Headers.ContainsKey("X-PhoneBox-App"))
         Interlocked.Exchange(ref ApprovalStore.PhoneLastSeen, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -230,7 +199,7 @@ app.MapPost("/api/restart", (IHostApplicationLifetime life) =>
     return Results.Ok();
 });
 
-// ---------------------------------------------------------------- web kiosk (browsers, old tablets): /kiosk?token=…
+// ---------------------------------------------------------------- web kiosk (other devices, over Wi-Fi): /kiosk?token=…
 app.MapKiosk();
 
 // ---------------------------------------------------------------- settings UI (browser)

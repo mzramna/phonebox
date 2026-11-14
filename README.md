@@ -368,26 +368,29 @@ them over Wi-Fi.
 ## Web kiosk (tablets, monitors and old devices)
 
 A device without the phone app — a tablet, a second monitor, a Raspberry Pi screen, Fully Kiosk Browser — can show
-the panel in a browser. Turn on **Settings › General › Web kiosk** (it needs **Wi-Fi & Tailscale** on as well), then
-open the address shown there on the device and bookmark it:
+the panel in a browser. Turn on **Settings › General › Web kiosk** (it needs **Wi-Fi & Tailscale** on as well) and
+save; the card then shows the kiosk address for each of the PC's addresses (LAN and Tailscale):
 
 ```
 https://<pc>:8766/kiosk?token=<kiosk key>
 ```
 
-- It shows **exactly the pages the phone shows**: the same panel, layout, widgets, appearance and rules, with the same
-  API as the phone over Wi-Fi (keys, media, processes, Docker, OBS, Home Assistant, Claude Code Allow / Deny).
-  Phone-only features (battery, brightness, vibration, volume keys) are left out. This is what current browsers
-  get (Chrome / WebView 105+, Safari 16+, Firefox 110+).
+Open it once on the device. The browser is signed in and sent to `/kiosk/` without the key in the address; it stays
+signed in for 30 days (configurable). After that, or after **New key**, open the address again.
+
+- It shows **exactly the pages the phone shows**: the same panel, layout, widgets, appearance and rules. This is
+  what current browsers get (Chrome / WebView 105+, Safari 16+, Firefox 110+).
+- **Read only by default.** **Allow control** lets it use keys, media and volume, the Control Deck, Docker, OBS and
+  Home Assistant actions. **Allow answering Claude Code permission prompts** is a separate, riskier opt-in (see
+  below). A kiosk can never end processes, use the webhook API or report a phone battery.
 - **Older browsers** are sent to `/kiosk/lite/` automatically: the same panel, with the same pages, widgets and
   look, built for browsers without container queries or modern JavaScript, down to **Firefox 68**, the last Firefox
   for **Android 4.4** (install it from Mozilla's archive). The Android 4.4 built-in browser is too old for either and
-  says so. Add `&full=1` to the address to skip the check.
+  says so. Add `?full=1` to skip the check.
 - Both reconnect by themselves after the network drops and have no scrollbars, so they suit fullscreen browsers.
-- It uses the Wi-Fi port, so the connection is HTTPS with the agent's self-signed certificate: accept the warning
-  once on the device, or turn on "ignore SSL errors" in Fully Kiosk Browser.
-- The kiosk key is separate from the phone's key and the webhook key, and **New key** replaces it. The page keeps it
-  in an HttpOnly, SameSite=Strict cookie for its own requests. On this PC, "Open here" opens the kiosk locally.
+- It is served only on the Wi-Fi port, over HTTPS with the agent's self-signed certificate: accept the warning once
+  on the device, or turn on "ignore SSL errors" in Fully Kiosk Browser. **Preview on this PC** opens the same pages
+  locally (`/panel/`).
 
 ## Updates
 
@@ -433,10 +436,17 @@ flowchart LR
   the phone asks for a widget's output and never sees the command.
 - Webhooks from other machines need the separate webhook key, which cannot open the phone API and can be replaced
   on its own.
-- The web kiosk is off by default. It can do what the phone can over Wi-Fi (settings, pairing and tests stay local),
-  so treat its address like a password. Its key is separate from the phone's key and opens nothing else; the page
-  sends no referrer, accepts calls only from itself, and Custom HTML widgets cannot use its API. While it is off,
-  `/kiosk` answers 404.
+- The web kiosk is off by default (`/kiosk` answers 404) and served only on the Wi-Fi port, never on the local one.
+  Its key is separate from the phone's key, created when the kiosk is turned on, and opens nothing else. The address
+  with the key is traded for a cookie that holds a value derived from it, expires (30 days by default) and stops
+  working when the key is replaced; the key is removed from the address bar. The kiosk is read only unless control
+  is allowed, and never reaches settings, pairing, tests, the webhook API (it only reads the pushed values the panel
+  shows), "end process" or the phone battery report. Open live streams are cut off within a second when the kiosk is turned off, its key replaced or a
+  permission removed. Only the page itself may call its API (same origin, no referrer), and Custom HTML widgets
+  cannot use it. The copied address and browser history keep the key and may sync: treat it like a password.
+- Answering Claude Code prompts from a kiosk is a separate opt-in. A browser does not pin the agent's certificate the
+  way the phone does, so someone on the same network could intercept a kiosk that accepts certificate warnings;
+  leave it off unless the network is trusted.
 - Ending processes is limited to your own session, never touches a list of Windows-critical processes, and can be
   switched off in the processes widget's options.
 - **Claude Code permission prompts** are opt-in. The hook only posts the request to the agent on `127.0.0.1`; the

@@ -146,10 +146,16 @@ public sealed class LanConfig
 
 public sealed class KioskConfig
 {
-    /// <summary>Serve the web kiosk at /kiosk (on the Wi-Fi / Tailscale HTTPS port, and locally for a browser on this PC).</summary>
+    /// <summary>Serve the web kiosk at /kiosk on the Wi-Fi / Tailscale HTTPS port (never on the local port).</summary>
     public bool Enabled { get; set; }
-    /// <summary>Key in the kiosk URL (?token=); it opens only /kiosk. Empty = generate a new one.</summary>
+    /// <summary>Key in the kiosk address (?token=). Generated when the kiosk is turned on; empty = generate a new one then.</summary>
     public string? Token { get; set; }
+    /// <summary>Let the kiosk run keys, media and volume, Control Deck, Docker, OBS and Home Assistant actions. Off: read only.</summary>
+    public bool AllowControl { get; set; }
+    /// <summary>Let the kiosk answer Claude Code permission prompts (Allow / Deny). Off: prompts never go to a kiosk.</summary>
+    public bool AllowApprovals { get; set; }
+    /// <summary>How long a browser stays signed in after opening the kiosk address, in days (1–400).</summary>
+    public int CookieDays { get; set; } = 30;
 }
 
 public sealed class UpdateConfig
@@ -441,7 +447,10 @@ public sealed partial class ConfigStore(string path)
         if (string.IsNullOrWhiteSpace(c.Lan.Token)) c.Lan.Token = NewToken();
         if (string.IsNullOrWhiteSpace(c.Lan.WebhookToken)) c.Lan.WebhookToken = NewToken();
         c.Kiosk ??= new();
-        if (string.IsNullOrWhiteSpace(c.Kiosk.Token)) c.Kiosk.Token = NewToken();
+        // the key is created when the kiosk is turned on, so a kiosk that was never used has none (not even in backups)
+        if (c.Kiosk.Enabled && string.IsNullOrWhiteSpace(c.Kiosk.Token)) c.Kiosk.Token = NewToken();
+        c.Kiosk.Token = string.IsNullOrWhiteSpace(c.Kiosk.Token) ? null : c.Kiosk.Token.Trim();
+        c.Kiosk.CookieDays = Math.Clamp(c.Kiosk.CookieDays, 1, 400);
         c.Night.Brightness = Math.Clamp(c.Night.Brightness, 0.01, 1);
 
         c.Pages = NormalizePages(c.Pages);

@@ -568,11 +568,19 @@ dd { margin: 0; word-break: break-all; }
       </div>
       <div class="card">
         <h3>Web kiosk (tablets, monitors, old devices)</h3>
-        <div class="row" style="margin-bottom:8px"><label class="switch"><input type="checkbox" data-bind="kiosk.enabled"><span></span></label> Show the phone's pages in a browser</div>
+        <div class="row" style="margin-bottom:8px"><label class="switch"><input type="checkbox" data-bind="kiosk.enabled"><span></span></label> Show the phone's pages in a browser on another device</div>
         <p class="hint" style="margin:0 0 12px">For devices without the phone app &mdash; a tablet, a second monitor, a Raspberry Pi screen, Fully Kiosk Browser. Current browsers get exactly
-          the phone's pages (with the phone's controls, Claude Code prompts included); older ones get the same panel built for them, down to Firefox 68
-          on Android 4.4. Open the address below on the device and bookmark it. It uses the Wi-Fi &amp; Tailscale port (HTTPS with this PC's self-signed certificate:
-          accept the warning once, or turn on "ignore SSL errors" in Fully Kiosk). Anyone with the address can use the panel like the phone: treat it like a password and replace the key if it leaks.</p>
+          the phone's pages; older ones get the same panel built for them, down to Firefox 68 on Android 4.4. It is served only over the Wi-Fi &amp; Tailscale port
+          (HTTPS with this PC's self-signed certificate: accept the warning once, or turn on "ignore SSL errors" in Fully Kiosk). Open the address below on the device:
+          it signs that browser in and removes the key from the address bar.</p>
+        <div class="row" style="margin-bottom:6px"><label class="switch"><input type="checkbox" data-bind="kiosk.allowControl"><span></span></label> Allow control: keys, media and volume, Control Deck, Docker, OBS and Home Assistant actions</div>
+        <p class="hint" style="margin:0 0 10px">Off, the kiosk only shows information. Even on, it can never end processes, use the webhooks or report a phone battery.</p>
+        <div class="row" style="margin-bottom:6px"><label class="switch"><input type="checkbox" data-bind="kiosk.allowApprovals"><span></span></label> Allow answering Claude Code permission prompts</div>
+        <p class="hint" style="margin:0 0 10px"><b>Risky:</b> prompts then go to an open kiosk instead of the terminal, and anyone with the kiosk address can allow
+          commands on this PC. Unlike the phone, a browser does not pin this PC's certificate: someone on the same network could intercept a kiosk that accepts certificate warnings.</p>
+        <div class="grid2" style="margin-bottom:8px">
+          <div class="field"><label>Stay signed in (days)</label><input type="number" min="1" max="400" data-bind="kiosk.cookieDays" data-type="int"></div>
+        </div>
         <div id="kioskInfo"></div>
       </div>
       <div class="card">
@@ -1689,20 +1697,24 @@ setInterval(pollCharge, 5000);
 // ---------------------------------------------------------------- web kiosk
 function renderKiosk(lan) {
   const token = cfg.kiosk?.token || '';
-  const host = lan?.active && lan.hosts?.length ? `https://${lan.hosts[0]}:${lan.port}` : null;
-  const local = `http://127.0.0.1:${location.port || 8765}`;
-  const link = (base) => `${base}/kiosk?token=${encodeURIComponent(token)}`;
-  const shown = (base) => `${base}/kiosk?token=${token ? token.slice(0, 6) + '…' : '(generated on save)'}`;
   const on = !!cfg.kiosk?.enabled;
+  const hosts = lan?.active ? (lan.hosts || []) : [];
+  const link = (host) => `https://${host}:${lan.port}/kiosk?token=${encodeURIComponent(token)}`;
+  const label = (host) => host.startsWith('100.') ? host + ' (Tailscale)' : host;
+  const rows = hosts.map((host) => h('div', { class: 'row', style: { gap: '8px', margin: '0 0 6px', flexWrap: 'wrap' } },
+    h('code', {}, `https://${host}:${lan.port}/kiosk?token=${token ? token.slice(0, 6) + '…' : '…'}`),
+    h('span', { class: 'hint' }, label(host).replace(host, '').trim()),
+    h('button', { class: 'btn sm', disabled: !token, onclick: () => { navigator.clipboard?.writeText(link(host)); toast(`Kiosk address for ${label(host)} copied`); } }, 'Copy address')));
   $('kioskInfo').replaceChildren(
+    ...(on && token ? rows : []),
     h('div', { class: 'row', style: { gap: '8px', margin: '0 0 8px', flexWrap: 'wrap' } },
-      h('code', {}, shown(host || 'https://<this PC>:' + (lan?.port || 8766))),
-      h('button', { class: 'btn sm', disabled: !token || !host, onclick: () => { navigator.clipboard?.writeText(link(host)); toast('Kiosk address copied'); } }, 'Copy address'),
-      h('button', { class: 'btn sm', disabled: !token, onclick: () => window.open(link(local), '_blank', 'noopener') }, 'Open here'),
-      h('button', { class: 'btn sm', onclick: () => { cfg.kiosk = { ...(cfg.kiosk || {}), token: '' }; changed(); toast('A new kiosk key is generated on save'); } }, 'New key')),
-    h('p', { class: 'hint', style: { margin: 0 } }, !on ? 'Off: /kiosk answers 404 (turn it on and save first).'
-      : host ? 'Other devices on your network or Tailscale can open the address above.'
-      : 'Turn on "Wi-Fi & Tailscale" above (and restart) so other devices can reach it. "Open here" works on this PC already.'));
+      h('button', { class: 'btn sm', onclick: () => window.open('/panel/', '_blank', 'noopener') }, 'Preview on this PC'),
+      h('button', { class: 'btn sm', disabled: !token, onclick: () => { cfg.kiosk = { ...(cfg.kiosk || {}), token: '' }; changed(); toast('A new kiosk key is made on save: every kiosk has to be opened again'); } }, 'New key')),
+    h('p', { class: 'hint', style: { margin: 0 } }, !on ? 'Off: /kiosk answers 404. Turn it on and save to create its key and address.'
+      : !token ? 'Save to create the kiosk key and its address.'
+      : !hosts.length ? 'Turn on "Wi-Fi & Tailscale" above (and restart) so other devices can reach the kiosk.'
+      : 'Pick the address the device can reach (Tailscale for devices elsewhere). The copied address and the browser\'s history keep the key, and both may sync to other devices: '
+        + 'paste it only on the kiosk device, and press New key if it leaks. "Preview on this PC" opens the same pages locally.'));
 }
 
 // ---------------------------------------------------------------- webhooks
@@ -2140,7 +2152,7 @@ async function load() {
   const res = await fetch('/api/settings');
   cfgVersion = res.headers.get('X-Config-Version');
   cfg = await res.json();
-  cfg.pages ??= []; cfg.shortcuts ??= []; cfg.rules ??= []; cfg.display ??= {}; cfg.night ??= {}; cfg.weather ??= {}; cfg.lan ??= { enabled: false, port: 8766 }; cfg.kiosk ??= { enabled: false }; cfg.updates ??= { auto: true, repo: 'ersinkoc/phonebox' }; cfg.claude ??= { phoneApprovals: true, timeoutSec: 90, onlyWhenAway: false };
+  cfg.pages ??= []; cfg.shortcuts ??= []; cfg.rules ??= []; cfg.display ??= {}; cfg.night ??= {}; cfg.weather ??= {}; cfg.lan ??= { enabled: false, port: 8766 }; cfg.kiosk ??= { enabled: false, allowControl: false, allowApprovals: false, cookieDays: 30 }; cfg.updates ??= { auto: true, repo: 'ersinkoc/phonebox' }; cfg.claude ??= { phoneApprovals: true, timeoutSec: 90, onlyWhenAway: false };
   cfg.codexBar ??= { providers: ['claude', 'codex', 'antigravity'], rotate: true, pageSize: 2, rotateInterval: 8 };
   for (const [k, v] of Object.entries({ idleReturnSec: 90, switchCountdownSec: 3, touchGraceSec: 20, minDwellSec: 15, holdMaxMin: 30, keepAwake: true })) cfg.display[k] ??= v;
   cfg.charge ??= { enabled: false, min: 50, max: 80, method: 'ha' };
